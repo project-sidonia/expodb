@@ -10,37 +10,23 @@ import (
 
 	"github.com/hashicorp/raft"
 	"github.com/justinas/alice"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/hlog"
+	"go.uber.org/zap"
 )
 
 type httpServer struct {
 	address net.Addr
 	node    *node
-	logger  *zerolog.Logger
+	logger  *zap.Logger
 }
 
 func (server *httpServer) Start() {
-	server.logger.Info().Str("address", server.address.String()).Msg("Starting server")
+	server.logger.Info("Starting http server", zap.String("address", server.address.String()))
+	// .Str("address", server.address.String()).Msg()
 	c := alice.New()
-	handler := c.Append(hlog.NewHandler(*server.logger)).
-		Append(hlog.AccessHandler(func(r *http.Request, status, size int, duration time.Duration) {
-			hlog.FromRequest(r).Info().
-				Str("req.method", r.Method).
-				Str("req.url", r.URL.String()).
-				Int("req.status", status).
-				Int("req.size", size).
-				Dur("req.duration", duration).
-				Msg("")
-		})).
-		Append(hlog.RemoteAddrHandler("req.ip")).
-		Append(hlog.UserAgentHandler("req.useragent")).
-		Append(hlog.RefererHandler("req.referer")).
-		Append(hlog.RequestIDHandler("req.id", "Request-Id")).
-		Then(server)
+	handler := c.Then(server)
 
 	if err := http.ListenAndServe(server.address.String(), handler); err != nil {
-		server.logger.Fatal().Err(err).Msg("Error running HTTP server")
+		server.logger.Fatal("Error running HTTP server", zap.Error(err))
 	}
 }
 
@@ -79,7 +65,7 @@ func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) 
 
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		server.logger.Error().Err(err).Msg("Bad request")
+		server.logger.Error("Bad request", zap.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -92,23 +78,18 @@ func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) 
 
 	eventBytes, err := json.Marshal(event)
 	if err != nil {
-		server.logger.Error().Err(err).Msg("")
+		server.logger.Error("Failed to marshal response", zap.Error(err))
+		statusInternalError(w)
+		return
 	}
 
 	applyFuture := server.node.raftNode.Apply(eventBytes, 5*time.Second)
 	if err := applyFuture.Error(); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		statusInternalError(w)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-}
-
-func statusNotFound(w http.ResponseWriter, r *http.Request, status int) {
-	w.WriteHeader(status)
-	if status == http.StatusNotFound {
-		fmt.Fprint(w, `{"status": "404 not found"}`)
-	}
 }
 
 func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +98,7 @@ func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
 	key := removeKeyPath(r.URL.Path)
 	val, ok := server.node.fsm.stateValue[key]
 	if !ok {
-		statusNotFound(w, r, http.StatusNotFound)
+		statusNotFound(w)
 		return
 	}
 	response := struct {
@@ -131,7 +112,9 @@ func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
 
 	responseBytes, err := json.Marshal(response)
 	if err != nil {
-		server.logger.Error().Err(err).Msg("")
+		server.logger.Error("Failed to marshal response", zap.Error(err))
+		statusInternalError(w)
+		return
 	}
 
 	w.Write(responseBytes)
@@ -140,21 +123,32 @@ func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
 func (server *httpServer) handleJoin(w http.ResponseWriter, r *http.Request) {
 	peerAddress := r.Header.Get("Peer-Address")
 	if peerAddress == "" {
-		server.logger.Error().Msg("Peer-Address not set on request")
+		server.logger.Error("Peer-Address not set on request")
 		w.WriteHeader(http.StatusBadRequest)
 	}
 
 	addPeerFuture := server.node.raftNode.AddVoter(
 		raft.ServerID(peerAddress), raft.ServerAddress(peerAddress), 0, 0)
 	if err := addPeerFuture.Error(); err != nil {
-		server.logger.Error().
-			Err(err).
-			Str("peer.remoteaddr", peerAddress).
-			Msg("Error joining peer to Raft")
-		w.WriteHeader(http.StatusInternalServerError)
+		server.logger.Error("Error joining peer to Raft", zap.String("peer.remoteaddr", peerAddress), zap.Error(err))
+		statusInternalError(w)
 		return
 	}
 
-	server.logger.Info().Str("peer.remoteaddr", peerAddress).Msg("Peer joined Raft")
+	server.logger.Info("Peer joined Raft", zap.String("peer.remoteaddr", peerAddress))
 	w.WriteHeader(http.StatusOK)
+}
+
+//~~~~~~~~~~~ Http Utils ~~~~~~~~~~~~~~~~~~~~~
+
+func statusNotFound(w http.ResponseWriter) {
+	status := http.StatusNotFound
+	w.WriteHeader(status)
+	fmt.Fprint(w, `{"status": "404 not found"}`)
+}
+
+func statusInternalError(w http.ResponseWriter) {
+	status := http.StatusInternalServerError
+	w.WriteHeader(status)
+	fmt.Fprint(w, `{"status": "internal server error"}`)
 }

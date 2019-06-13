@@ -7,12 +7,12 @@ import (
 	"sync"
 
 	"github.com/hashicorp/raft"
-	"github.com/rs/zerolog"
+	"go.uber.org/zap"
 )
 
 type fsm struct {
 	mutex      sync.Mutex
-	log        *zerolog.Logger
+	log        *zap.Logger
 	stateValue map[string]int
 }
 
@@ -34,7 +34,7 @@ func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
 		fsm.mutex.Lock()
 		defer fsm.mutex.Unlock()
 		fsm.stateValue[e.Key] = e.Value
-		fsm.log.Debug().Int(e.Key, e.Value).Msg("saving key")
+		fsm.log.Debug("Saving key", zap.Int(e.Key, e.Value))
 		return nil
 	default:
 		panic(fmt.Sprintf("Unrecognized event type in Raft log entry: %s. This is a bug.", e.Type))

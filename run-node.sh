@@ -10,6 +10,8 @@ function usage() {
     echo "   run-node.sh <node number (1-5)>"
 }
 
+go build
+
 if [ -z ${node_number} ] ; then
     usage
     exit 1

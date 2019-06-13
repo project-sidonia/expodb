@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 
 	multierror "github.com/hashicorp/go-multierror"
 	template "github.com/hashicorp/go-sockaddr/template"
 	flag "github.com/ogier/pflag"
-	"os"
 )
 
 type RawConfig struct {
@@ -18,6 +18,7 @@ type RawConfig struct {
 	HTTPPort    int
 	DataDir     string
 	Bootstrap   bool
+	LogPrefix   string
 }
 
 type Config struct {
@@ -138,6 +139,9 @@ func readRawConfig() *RawConfig {
 
 	flag.StringVar(&config.JoinAddress, "join",
 		"", "Address of another node to join")
+
+	flag.StringVar(&config.LogPrefix, "log-prefix",
+		"", "the prefix context to add to each log line")
 
 	flag.BoolVar(&config.Bootstrap, "bootstrap",
 		false, "Bootstrap the cluster with this node")

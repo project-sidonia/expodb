@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
-	stdlog "log"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,11 +13,16 @@ import (
 
 	"github.com/hashicorp/raft"
 	"github.com/hashicorp/raft-boltdb"
-	"github.com/rs/zerolog"
+	"github.com/hashicorp/serf/serf"
+	"go.uber.org/zap"
 )
 
 func main() {
-	logger := zerolog.New(os.Stdout)
+	logger, err := zap.NewProduction()
+	if err != nil {
+		log.Fatalf("can't initialize zap logger: %v", err)
+	}
+	defer logger.Sync()
 
 	rawConfig := readRawConfig()
 	config, err := resolveConfig(rawConfig)
@@ -25,9 +30,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Configuration errors - %s\n", err)
 		os.Exit(1)
 	}
+	logger = logger.Named(rawConfig.LogPrefix)
 
-	nodeLogger := logger.With().Str("component", "node").Logger()
-	node, err := NewNode(config, &nodeLogger)
+	serf.DefaultConfig()
+
+	node, err := NewNode(config, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error configuring node: %s", err)
 		os.Exit(1)
@@ -62,8 +69,8 @@ func main() {
 
 			for {
 				if err := retryJoin(); err != nil {
-					logger.Error().Err(err).Str("component", "join").Msg("Error joining cluster")
-					time.Sleep(1 * time.Second)
+					logger.Error("Error joining cluster", zap.Error(err))
+					time.Sleep(5 * time.Second)
 				} else {
 					break
 				}
@@ -71,11 +78,10 @@ func main() {
 		}()
 	}
 
-	httpLogger := logger.With().Str("component", "http").Logger()
 	httpServer := &httpServer{
 		node:    node,
 		address: config.HTTPAddress,
-		logger:  &httpLogger,
+		logger:  logger.Named("http"),
 	}
 
 	httpServer.Start()
@@ -86,17 +92,17 @@ type node struct {
 	config   *Config
 	raftNode *raft.Raft
 	fsm      *fsm
-	log      *zerolog.Logger
+	log      *zap.Logger
 }
 
 func (n *node) IsLeader() bool {
 	return n.raftNode.State() == raft.Leader
 }
 
-func NewNode(config *Config, log *zerolog.Logger) (*node, error) {
+func NewNode(config *Config, logger *zap.Logger) (*node, error) {
 	fsm := &fsm{
 		stateValue: map[string]int{},
-		log:        log,
+		log:        logger,
 	}
 
 	if err := os.MkdirAll(config.DataDir, 0700); err != nil {
@@ -105,15 +111,15 @@ func NewNode(config *Config, log *zerolog.Logger) (*node, error) {
 
 	raftConfig := raft.DefaultConfig()
 	raftConfig.LocalID = raft.ServerID(config.RaftAddress.String())
-	raftConfig.Logger = stdlog.New(log, "", 0)
-	transportLogger := log.With().Str("component", "raft-transport").Logger()
-	transport, err := raftTransport(config.RaftAddress, transportLogger)
+	raftConfig.Logger = NewHclog2ZapLogger(logger)
+	transportLogger := logger.Named("raft.transport")
+	transport, err := raftTransport(config.RaftAddress, &loggerWriter{transportLogger})
 	if err != nil {
 		return nil, err
 	}
 
-	snapshotStoreLogger := log.With().Str("component", "raft-snapshots").Logger()
-	snapshotStore, err := raft.NewFileSnapshotStore(config.DataDir, 1, snapshotStoreLogger)
+	snapshotStoreLogger := logger.Named("raft.snapshots")
+	snapshotStore, err := raft.NewFileSnapshotStore(config.DataDir, 1, &loggerWriter{snapshotStoreLogger})
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +133,9 @@ func NewNode(config *Config, log *zerolog.Logger) (*node, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	logger.Info("NewNode created raft node", zap.String("raft-config", fmt.Sprintf("%+v", raftConfig)))
+
 	raftNode, err := raft.NewRaft(raftConfig, fsm, logStore, stableStore,
 		snapshotStore, transport)
 	if err != nil {
@@ -147,7 +156,7 @@ func NewNode(config *Config, log *zerolog.Logger) (*node, error) {
 	return &node{
 		config:   config,
 		raftNode: raftNode,
-		log:      log,
+		log:      logger,
 		fsm:      fsm,
 	}, nil
 }

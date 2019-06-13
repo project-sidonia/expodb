@@ -51,7 +51,7 @@ func (tc *transports) AddNode(n string, hooks TransportHooks) *transport {
 	return t
 }
 
-// TransportHooks allow a test to customize the behavour of the transport.
+// TransportHooks allow a test to customize the behavior of the transport.
 // [if you return an error from a PreXXX call, then the error is returned to the caller, and the RPC never made]
 type TransportHooks interface {
 	// PreRPC is called before every single RPC call from the transport
@@ -112,9 +112,15 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 	}
 	rpc := raft.RPC{RespChan: rc}
 	var reqVote raft.RequestVoteRequest
+	var timeoutNow raft.TimeoutNowRequest
 	var appEnt raft.AppendEntriesRequest
 	dec := codec.NewDecoderBytes(buff.Bytes(), &codecHandle)
 	switch req.(type) {
+	case *raft.TimeoutNowRequest:
+		if err := dec.Decode(&timeoutNow); err != nil {
+			return err
+		}
+		rpc.Command = &timeoutNow
 	case *raft.RequestVoteRequest:
 		if err := dec.Decode(&reqVote); err != nil {
 			return err
@@ -164,6 +170,11 @@ func (t *transport) sendRPC(target string, req interface{}, resp interface{}) er
 	codec.NewEncoder(&buff, &codecHandle).Encode(result.Response)
 	codec.NewDecoderBytes(buff.Bytes(), &codecHandle).Decode(resp)
 	return result.Error
+}
+
+// TimeoutNow implements the Transport interface.
+func (t *transport) TimeoutNow(id raft.ServerID, target raft.ServerAddress, args *raft.TimeoutNowRequest, resp *raft.TimeoutNowResponse) error {
+	return t.sendRPC(string(target), args, resp)
 }
 
 // AppendEntries sends the appropriate RPC to the target node.
