@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ import (
 
 type httpServer struct {
 	address net.Addr
-	node    *node
+	node    *server
 	logger  *zap.Logger
 }
 
@@ -70,18 +70,14 @@ func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	event := &event{
-		Type:  "set",
-		Key:   key,
-		Value: request.Value,
-	}
-
-	eventBytes, err := json.Marshal(event)
+	event := NewKeyValEvent("set", key, request.Value)
+	eventBytes, err := event.Marshal()
 	if err != nil {
 		server.logger.Error("Failed to marshal response", zap.Error(err))
 		statusInternalError(w)
 		return
 	}
+	eventBytes = AddRaftType(KeyValType, eventBytes)
 
 	applyFuture := server.node.raftNode.Apply(eventBytes, 5*time.Second)
 	if err := applyFuture.Error(); err != nil {

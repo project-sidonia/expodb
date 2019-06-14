@@ -1,7 +1,6 @@
-package main
+package loggingutils
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -98,15 +97,4 @@ func argsToFields(args ...interface{}) []zapcore.Field {
 	}
 
 	return fields
-}
-
-type loggerWriter struct {
-	logger *zap.Logger
-}
-
-func (l *loggerWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	p = bytes.TrimSpace(p)
-	l.logger.Info("", zap.ByteString("raw-msg", p))
-	return n, nil
 }

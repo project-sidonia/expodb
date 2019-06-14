@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"encoding/json"
@@ -12,32 +12,34 @@ import (
 
 type fsm struct {
 	mutex      sync.Mutex
-	log        *zap.Logger
+	logger     *zap.Logger
 	stateValue map[string]int
-}
-
-type event struct {
-	Type  string
-	Key   string
-	Value int
 }
 
 // Apply applies a Raft log entry to the key-value store.
 func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
-	var e event
-	if err := json.Unmarshal(logEntry.Data, &e); err != nil {
-		panic("Failed unmarshaling Raft log entry. This is a bug.")
-	}
+	buf := logEntry.Data[:RaftTypeSize]
+	msgType := byte(buf[0])
 
-	switch e.Type {
-	case "set":
-		fsm.mutex.Lock()
-		defer fsm.mutex.Unlock()
-		fsm.stateValue[e.Key] = e.Value
-		fsm.log.Debug("Saving key", zap.Int(e.Key, e.Value))
-		return nil
+	switch msgType {
+	case KeyValType:
+		e, err := UnMarshalKeyValEvent(buf)
+		if err != nil {
+			fsm.logger.Error("Failed to unmarshal response", zap.Error(err))
+			return nil
+		}
+		switch e.RequestType {
+		case "set":
+			fsm.mutex.Lock()
+			defer fsm.mutex.Unlock()
+			fsm.stateValue[e.Key] = e.Value
+			fsm.logger.Debug("Saving key", zap.Int(e.Key, e.Value))
+			return nil
+		default:
+			panic(fmt.Sprintf("Unrecognized key value event type in Raft log entry: %v. This is a bug.", e.RequestType))
+		}
 	default:
-		panic(fmt.Sprintf("Unrecognized event type in Raft log entry: %s. This is a bug.", e.Type))
+		panic(fmt.Sprintf("Unrecognized raft message type in Raft log entry: `%v`. This is a bug.", msgType))
 	}
 }
 

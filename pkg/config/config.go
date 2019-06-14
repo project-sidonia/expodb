@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"fmt"
@@ -43,7 +43,7 @@ func (err *ConfigError) Error() string {
 	return fmt.Sprintf("%s: %s", err.ConfigurationPoint, err.Err.Error())
 }
 
-func argsToConfig() (*Config, error) {
+func LoadConfig() (*Config, error) {
 	var errors *multierror.Error
 
 	var args = getArgs()
