@@ -23,14 +23,12 @@ func main() {
 		log.Fatalf("can't initialize zap logger: %v", err)
 	}
 	defer logger.Sync()
-
-	rawConfig := readRawConfig()
-	config, err := resolveConfig(rawConfig)
+	config, err := argsToConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration errors - %s\n", err)
 		os.Exit(1)
 	}
-	logger = logger.Named(rawConfig.LogPrefix)
+	logger = logger.Named(config.LoggerName)
 
 	serf.DefaultConfig()
 
@@ -105,10 +103,12 @@ func NewNode(config *Config, logger *zap.Logger) (*node, error) {
 		log:        logger,
 	}
 
-	if err := os.MkdirAll(config.DataDir, 0700); err != nil {
+	if err := os.MkdirAll(config.RaftDataDir, 0700); err != nil {
 		return nil, err
 	}
-
+	if err := os.MkdirAll(config.SerfDataDir, 0700); err != nil {
+		return nil, err
+	}
 	raftConfig := raft.DefaultConfig()
 	raftConfig.LocalID = raft.ServerID(config.RaftAddress.String())
 	raftConfig.Logger = NewHclog2ZapLogger(logger)
@@ -119,17 +119,15 @@ func NewNode(config *Config, logger *zap.Logger) (*node, error) {
 	}
 
 	snapshotStoreLogger := logger.Named("raft.snapshots")
-	snapshotStore, err := raft.NewFileSnapshotStore(config.DataDir, 1, &loggerWriter{snapshotStoreLogger})
+	snapshotStore, err := raft.NewFileSnapshotStore(config.RaftDataDir, 1, &loggerWriter{snapshotStoreLogger})
 	if err != nil {
 		return nil, err
 	}
-
-	logStore, err := raftboltdb.NewBoltStore(filepath.Join(config.DataDir, "raft-log.bolt"))
+	logStore, err := raftboltdb.NewBoltStore(filepath.Join(config.RaftDataDir, "raft-log.bolt"))
 	if err != nil {
 		return nil, err
 	}
-
-	stableStore, err := raftboltdb.NewBoltStore(filepath.Join(config.DataDir, "raft-stable.bolt"))
+	stableStore, err := raftboltdb.NewBoltStore(filepath.Join(config.RaftDataDir, "raft-stable.bolt"))
 	if err != nil {
 		return nil, err
 	}

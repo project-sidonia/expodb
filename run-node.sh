@@ -26,10 +26,10 @@ node_raft_port=$((6999 + $node_number))
 node_http_port=$((7999 + $node_number))
 data_directory="./node${node_number}"
 
-args="--data-dir=${data_directory}"
+args="--raft-data-dir=${data_directory}"
 args="${args} --raft-port=${node_raft_port}"
 args="${args} --http-port=${node_http_port}"
-args="${args} --log-prefix=node-${node_number}"
+args="${args} --log-name=node-${node_number}"
 
 if [ "${node_number}" == 1 ] ; then
     args="${args} --bootstrap true"

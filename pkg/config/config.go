@@ -11,22 +11,27 @@ import (
 	flag "github.com/ogier/pflag"
 )
 
-type RawConfig struct {
+type args struct {
 	BindAddress string
 	JoinAddress string
 	RaftPort    int
+	SerfPort    int
 	HTTPPort    int
-	DataDir     string
+	SerfDataDir string
+	RaftDataDir string
 	Bootstrap   bool
-	LogPrefix   string
+	LoggerName  string
 }
 
 type Config struct {
+	SerfAddress net.Addr
 	RaftAddress net.Addr
 	HTTPAddress net.Addr
 	JoinAddress string
-	DataDir     string
+	SerfDataDir string
+	RaftDataDir string
 	Bootstrap   bool
+	LoggerName  string
 }
 
 type ConfigError struct {
@@ -38,12 +43,14 @@ func (err *ConfigError) Error() string {
 	return fmt.Sprintf("%s: %s", err.ConfigurationPoint, err.Err.Error())
 }
 
-func resolveConfig(rawConfig *RawConfig) (*Config, error) {
+func argsToConfig() (*Config, error) {
 	var errors *multierror.Error
+
+	var args = getArgs()
 
 	// Bind address
 	var bindAddr net.IP
-	resolvedBindAddr, err := template.Parse(rawConfig.BindAddress)
+	resolvedBindAddr, err := template.Parse(args.BindAddress)
 	if err != nil {
 		configErr := &ConfigError{
 			ConfigurationPoint: "bind-address",
@@ -63,37 +70,59 @@ func resolveConfig(rawConfig *RawConfig) (*Config, error) {
 	}
 
 	// Raft port
-	if rawConfig.RaftPort < 1 || rawConfig.RaftPort > 65536 {
+	if args.RaftPort < 1 || args.RaftPort > 65536 {
 		configErr := &ConfigError{
 			ConfigurationPoint: "raft-port",
 			Err:                fmt.Errorf("port numbers must be 1 < port < 65536"),
 		}
 		errors = multierror.Append(errors, configErr)
 	}
-
 	// Construct Raft Address
 	raftAddr := &net.TCPAddr{
 		IP:   bindAddr,
-		Port: rawConfig.RaftPort,
+		Port: args.RaftPort,
+	}
+
+	// Serf port
+	if args.SerfPort < 1 || args.SerfPort > 65536 {
+		configErr := &ConfigError{
+			ConfigurationPoint: "serf-port",
+			Err:                fmt.Errorf("port numbers must be 1 < port < 65536"),
+		}
+		errors = multierror.Append(errors, configErr)
+	}
+	// Construct Serf Address
+	serfAddr := &net.TCPAddr{
+		IP:   bindAddr,
+		Port: args.SerfPort,
 	}
 
 	// HTTP port
-	if rawConfig.HTTPPort < 1 || rawConfig.HTTPPort > 65536 {
+	if args.HTTPPort < 1 || args.HTTPPort > 65536 {
 		configErr := &ConfigError{
 			ConfigurationPoint: "http-port",
 			Err:                fmt.Errorf("port numbers must be 1 < port < 65536"),
 		}
 		errors = multierror.Append(errors, configErr)
 	}
-
 	// Construct HTTP Address
 	httpAddr := &net.TCPAddr{
 		IP:   bindAddr,
-		Port: rawConfig.HTTPPort,
+		Port: args.HTTPPort,
 	}
 
-	// Data directory
-	dataDir, err := filepath.Abs(rawConfig.DataDir)
+	// Raft Data directory
+	raftDataDir, err := filepath.Abs(args.RaftDataDir)
+	if err != nil {
+		configErr := &ConfigError{
+			ConfigurationPoint: "data-dir",
+			Err:                err,
+		}
+		errors = multierror.Append(errors, configErr)
+	}
+
+	//Serf Data directory
+	serfDataDir, err := filepath.Abs(args.SerfDataDir)
 	if err != nil {
 		configErr := &ConfigError{
 			ConfigurationPoint: "data-dir",
@@ -107,45 +136,53 @@ func resolveConfig(rawConfig *RawConfig) (*Config, error) {
 	}
 
 	return &Config{
-		DataDir:     dataDir,
-		JoinAddress: rawConfig.JoinAddress, //TODO - validate this looks address-like
+		RaftDataDir: raftDataDir,
+		SerfDataDir: serfDataDir,
+		JoinAddress: args.JoinAddress, //TODO - validate this looks address-like
 		RaftAddress: raftAddr,
+		SerfAddress: serfAddr,
 		HTTPAddress: httpAddr,
-		Bootstrap:   rawConfig.Bootstrap,
+		Bootstrap:   args.Bootstrap,
 	}, nil
 }
 
-func readRawConfig() *RawConfig {
-	var config RawConfig
+func getArgs() *args {
+	var parsedArgs args
 
 	pwd, err := os.Getwd()
 	if err != nil {
 		pwd = "."
 	}
 
-	defaultDataPath := filepath.Join(pwd, "raft")
+	defaultSerfDataPath := filepath.Join(pwd, "serf")
+	flag.StringVarP(&parsedArgs.SerfDataDir, "serf-data-dir", "s",
+		defaultSerfDataPath, "Path in which to store Serf data")
 
-	flag.StringVarP(&config.DataDir, "data-dir", "d",
-		defaultDataPath, "Path in which to store Raft data")
+	defaultRaftDataPath := filepath.Join(pwd, "raft")
+	flag.StringVarP(&parsedArgs.RaftDataDir, "raft-data-dir", "d",
+		defaultRaftDataPath, "Path in which to store Raft data")
 
-	flag.StringVarP(&config.BindAddress, "bind-address", "a",
+	flag.StringVarP(&parsedArgs.BindAddress, "bind-address", "a",
 		"127.0.0.1", "IP Address on which to bind")
 
-	flag.IntVarP(&config.RaftPort, "raft-port", "r",
+	flag.IntVarP(&parsedArgs.RaftPort, "serf-port", "S",
+		6000, "Port on which to bind serf")
+
+	flag.IntVarP(&parsedArgs.RaftPort, "raft-port", "R",
 		7000, "Port on which to bind Raft")
 
-	flag.IntVarP(&config.HTTPPort, "http-port", "h",
+	flag.IntVarP(&parsedArgs.HTTPPort, "http-port", "H",
 		8000, "Port on which to bind HTTP")
 
-	flag.StringVar(&config.JoinAddress, "join",
+	flag.StringVar(&parsedArgs.JoinAddress, "join",
 		"", "Address of another node to join")
 
-	flag.StringVar(&config.LogPrefix, "log-prefix",
+	flag.StringVar(&parsedArgs.LoggerName, "log-name",
 		"", "the prefix context to add to each log line")
 
-	flag.BoolVar(&config.Bootstrap, "bootstrap",
+	flag.BoolVar(&parsedArgs.Bootstrap, "bootstrap",
 		false, "Bootstrap the cluster with this node")
 
 	flag.Parse()
-	return &config
+	return &parsedArgs
 }
