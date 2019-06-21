@@ -1,4 +1,4 @@
-package server
+package raft
 
 import (
 	"encoding/json"

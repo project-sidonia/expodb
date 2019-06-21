@@ -1,10 +1,9 @@
-package server
+package raft
 
 import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -15,22 +14,24 @@ import (
 	"go.uber.org/zap"
 )
 
-func setupRaftServer(config *config.Config, logger *zap.Logger) (*raft.Raft, *fsm, error) {
+func New(config *config.Config, logger *zap.Logger) (*raft.Raft, *fsm, error) {
 	fsm := &fsm{
 		stateValue: map[string]int{},
 		logger:     logger,
 	}
 
-	if err := os.MkdirAll(config.RaftDataDir, 0700); err != nil {
-		return nil, nil, err
+	// Construct Raft Address
+	raftAddr := &net.TCPAddr{
+		IP:   net.ParseIP(config.RaftBindAddress),
+		Port: config.RaftBindPort,
 	}
 
 	raftConfig := raft.DefaultConfig()
-	raftConfig.LocalID = raft.ServerID(config.RaftAddress.String())
+	raftConfig.LocalID = raft.ServerID(raftAddr.String())
 	raftConfig.Logger = loggingutils.NewHclog2ZapLogger(logger)
 	transportLogger := logger.Named("raft.transport")
 	transport, err := raftTransport(
-		config.RaftAddress,
+		raftAddr,
 		loggingutils.NewLogWriter(transportLogger),
 	)
 	if err != nil {

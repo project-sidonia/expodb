@@ -1,21 +1,26 @@
 package server
 
 import (
-	"fmt"
-	"net/http"
-	"net/url"
-	"time"
+	"context"
+	"net"
+	"os"
+	"os/signal"
 
 	"github.com/epsniff/expodb/pkg/config"
+	raftagent "github.com/epsniff/expodb/pkg/server/agents/raft"
+	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
 	"github.com/hashicorp/raft"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type server struct {
-	config   *config.Config
-	raftNode *raft.Raft
-	fsm      *fsm
-	logger   *zap.Logger
+	config    *config.Config
+	raftNode  *raft.Raft
+	fsm       *fsm
+	logger    *zap.Logger
+	serfAgent *serfagent.Agent
+	raftAgent *raftagent.Agent
 }
 
 func (n *server) IsLeader() bool {
@@ -23,51 +28,77 @@ func (n *server) IsLeader() bool {
 }
 
 func (n *server) Serve() {
+	ctx, can := context.WithCancel(context.Background())
+	defer can()
+	g, ctx := errgroup.WithContext(ctx)
 
-	// TODO move the Join logic into serf handler like nomad and consul
-	if n.config.JoinAddress != "" {
-		go func() {
-			retryJoin := func() error {
-				url := url.URL{
-					Scheme: "http",
-					Host:   n.config.JoinAddress,
-					Path:   "join",
-				}
+	// Run HTTP server
+	g.Go(func() error {
+		// Construct HTTP Address
+		httpAddr := &net.TCPAddr{
+			IP:   net.ParseIP(n.config.HTTPBindAddress),
+			Port: n.config.HTTPBindPort,
+		}
+		httpServer := &httpServer{
+			node:    n,
+			address: httpAddr,
+			logger:  n.logger.Named("http"),
+		}
+		go httpServer.Start() // there isn't a wait to use a context to cancel an http server?? so just spin it off in a go routine for now.
+		return nil
+	})
 
-				req, err := http.NewRequest(http.MethodPost, url.String(), nil)
-				if err != nil {
-					return err
-				}
-				req.Header.Add("Peer-Address", n.config.RaftAddress.String())
+	// Run serf agent
+	g.Go(func() error {
+		if err := n.serfag.Start(); err != nil {
+			can()
+			n.logger.Error("serf agent failed to start", zap.Error(err))
+			return err
+		}
+		n.logger.Info("serf agent started", zap.Bool("isSeed", n.config.IsSerfSeed), zap.String("node-name", n.serfag.SerfConfig().NodeName))
+		if !n.config.IsSerfSeed {
+			n.logger.Info("joining serf cluster using", zap.Strings("peers", n.config.SerfJoinAddrs))
+			const replay = false
+			n.serfag.Join(n.config.SerfJoinAddrs, replay)
+		}
 
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					return err
-				}
+		<-n.serfag.ShutdownCh() // wait for the serf agent to shutdown
+		can()
+		n.logger.Info("The serf agent shutdown successfully")
+		return nil
+	})
 
-				if resp.StatusCode != http.StatusOK {
-					return fmt.Errorf("non 200 status code: %d", resp.StatusCode)
-				}
+	// Handler for Ctrl+C and then call n.serfag.Shutdown()
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	g.Go(func() error {
+		select {
+		case <-ctx.Done():
+		case <-signalChan:
+			can()
+		}
+		return nil
+	})
 
-				return nil
-			}
+	// Go routine to cleanup seft agent on shutdown
+	g.Go(func() error {
+		<-ctx.Done()
+		n.logger.Info("Stopping serf agent")
+		return n.serfag.Shutdown()
+	})
 
-			for {
-				if err := retryJoin(); err != nil {
-					n.logger.Error("Error joining cluster", zap.Error(err))
-					time.Sleep(5 * time.Second)
-				} else {
-					break
-				}
-			}
-		}()
+	// Go routine to cleanup raft agent on shutdown
+	g.Go(func() error {
+		<-ctx.Done()
+		n.logger.Info("Stopping raft agent")
+		raftFuture := n.raftNode.Shutdown()
+		return raftFuture.Error()
+	})
+
+	n.logger.Info("Server started")
+	if err := g.Wait(); err != nil {
+		n.logger.Warn("Child workers returned an error")
+	} else {
+		n.logger.Info("Clean shutdown")
 	}
-
-	httpServer := &httpServer{
-		node:    n,
-		address: n.config.HTTPAddress,
-		logger:  n.logger.Named("http"),
-	}
-
-	httpServer.Start()
 }

@@ -17,12 +17,13 @@ func main() {
 		log.Fatalf("can't initialize zap logger: %v", err)
 	}
 	defer logger.Sync()
+
 	config, err := config.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration errors - %s\n", err)
 		os.Exit(1)
 	}
-	logger = logger.Named(config.LoggerName)
+	logger = logger.Named(config.ID())
 
 	serf.DefaultConfig()
 

@@ -77,10 +77,12 @@ func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) 
 		statusInternalError(w)
 		return
 	}
-	eventBytes = AddRaftType(KeyValType, eventBytes)
+	eventBytes = FooterRaftType(KeyValType, eventBytes)
+	server.logger.Info("Sending:", zap.ByteString("data", eventBytes))
 
 	applyFuture := server.node.raftNode.Apply(eventBytes, 5*time.Second)
 	if err := applyFuture.Error(); err != nil {
+		server.logger.Error("Failed to apply raft log", zap.Error(err))
 		statusInternalError(w)
 		return
 	}

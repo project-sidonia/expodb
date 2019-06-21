@@ -1,4 +1,4 @@
-package server
+package raft
 
 import (
 	"encoding/json"
@@ -18,9 +18,10 @@ type fsm struct {
 
 // Apply applies a Raft log entry to the key-value store.
 func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
-	buf := logEntry.Data[:RaftTypeSize]
-	msgType := byte(buf[0])
-
+	buf := logEntry.Data[:len(logEntry.Data)-1] // The last byte should be the typeS
+	fsm.logger.Info("DEBUG", zap.ByteString("apply.Buf", buf))
+	msgType := logEntry.Data[len(logEntry.Data)-1:][0] // read just the last byte for the type
+	fsm.logger.Info("DEBUG", zap.ByteString("apply.type", []byte{msgType}))
 	switch msgType {
 	case KeyValType:
 		e, err := UnMarshalKeyValEvent(buf)
@@ -33,7 +34,7 @@ func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
 			fsm.mutex.Lock()
 			defer fsm.mutex.Unlock()
 			fsm.stateValue[e.Key] = e.Value
-			fsm.logger.Debug("Saving key", zap.Int(e.Key, e.Value))
+			fsm.logger.Info("DEBUG: Saving key", zap.Int(e.Key, e.Value))
 			return nil
 		default:
 			panic(fmt.Sprintf("Unrecognized key value event type in Raft log entry: %v. This is a bug.", e.RequestType))

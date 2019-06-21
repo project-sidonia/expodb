@@ -90,6 +90,7 @@ func (l hclog2ZapLogger) StandardWriter(opts *hclog.StandardLoggerOptions) io.Wr
 	return &loggerWriter{l.zap}
 }
 
+// Hclog has key-->values in the array as i=key i+1=value
 func argsToFields(args ...interface{}) []zapcore.Field {
 	fields := []zapcore.Field{}
 	for i := 0; i < len(args); i += 2 {

@@ -10,7 +10,7 @@ function usage() {
     echo "   run-node.sh <node number (1-5)>"
 }
 
-go build
+go build ../.
 
 if [ -z ${node_number} ] ; then
     usage
@@ -22,19 +22,22 @@ if ! [[ "${node_number}" =~ ^[1-5]$ ]] ; then
     exit 1
 fi
 
+node_serf_port=$((5999 + $node_number))
 node_raft_port=$((6999 + $node_number))
 node_http_port=$((7999 + $node_number))
 data_directory="./node${node_number}"
 
-args="--raft-data-dir=${data_directory}"
+args="--serf-data-dir=${data_directory}_serf"
+args="${args} --raft-data-dir=${data_directory}_raft"
+args="${args} --serf-port=${node_serf_port}"
 args="${args} --raft-port=${node_raft_port}"
 args="${args} --http-port=${node_http_port}"
-args="${args} --log-name=node-${node_number}"
+args="${args} --node-name=node-${node_number}"
 
 if [ "${node_number}" == 1 ] ; then
-    args="${args} --bootstrap true"
+    args="${args} --bootstrap true --is-seed=true"
 else
-    args="${args} --join=127.0.0.1:8000"
+    args="${args} --serf-join=127.0.0.1:6000"
 fi
 
 echo running ./expodb ${args}

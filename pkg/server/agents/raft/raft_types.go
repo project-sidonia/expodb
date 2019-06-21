@@ -1,18 +1,16 @@
-package server
+package raft
 
 import (
 	"encoding/json"
 	"fmt"
 )
 
-func AddRaftType(rtype byte, buf []byte) []byte {
-	res := make([]byte, len(buf)+1)
-	res[0] = byte(rtype)
-	copy(buf, res[1:])
-	return res
+// FooterRaftType marks the last byte in the buffer with it's type info.
+func FooterRaftType(rtype byte, buf []byte) []byte {
+	buf = append(buf, rtype)
+	return buf
 }
 
-const RaftTypeSize int = 1
 const (
 	KeyValType byte = '0'
 )
