@@ -6,9 +6,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/hashicorp/raft"
+	"github.com/epsniff/expodb/pkg/server/agents/raft/machines/keyvalstore"
 	"github.com/justinas/alice"
 	"go.uber.org/zap"
 )
@@ -33,8 +32,8 @@ func (server *httpServer) Start() {
 func (server *httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/key") {
 		server.handleRequest(w, r)
-	} else if strings.HasPrefix(r.URL.Path, "/join") {
-		server.handleJoin(w, r)
+		//  } else if strings.HasPrefix(r.URL.Path, "/join") {
+		//	   server.handleJoin(w, r)
 	} else {
 		w.WriteHeader(http.StatusBadRequest)
 	}
@@ -58,7 +57,7 @@ func removeKeyPath(s string) string {
 
 func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) {
 	request := struct {
-		Value int `json:"value"`
+		Value string `json:"value"`
 	}{}
 
 	key := removeKeyPath(r.URL.Path)
@@ -70,19 +69,8 @@ func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	event := NewKeyValEvent("set", key, request.Value)
-	eventBytes, err := event.Marshal()
-	if err != nil {
-		server.logger.Error("Failed to marshal response", zap.Error(err))
-		statusInternalError(w)
-		return
-	}
-	eventBytes = FooterRaftType(KeyValType, eventBytes)
-	server.logger.Info("Sending:", zap.ByteString("data", eventBytes))
-
-	applyFuture := server.node.raftNode.Apply(eventBytes, 5*time.Second)
-	if err := applyFuture.Error(); err != nil {
-		server.logger.Error("Failed to apply raft log", zap.Error(err))
+	if err := server.node.SetKeyVal(key, request.Value); err != nil {
+		server.logger.Error("Failed to set keyvalue", zap.Error(err))
 		statusInternalError(w)
 		return
 	}
@@ -94,18 +82,18 @@ func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	key := removeKeyPath(r.URL.Path)
-	val, ok := server.node.fsm.stateValue[key]
-	if !ok {
+	val, err := server.node.GetKeyVal(key)
+	if err == keyvalstore.ErrKeyNotFound {
 		statusNotFound(w)
 		return
 	}
 	response := struct {
-		Value    int    `json:"value"`
-		IsLeader string `json:"leader"`
+		Value    string `json:"value"`
+		IsLeader bool   `json:"leader"`
 		Nodes    string `json:"nodes"`
 	}{
 		Value:    val,
-		IsLeader: string(server.node.raftNode.Leader()),
+		IsLeader: server.node.raftAgent.IsLeader(), // just for debugging
 	}
 
 	responseBytes, err := json.Marshal(response)
@@ -118,24 +106,24 @@ func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
 	w.Write(responseBytes)
 }
 
-func (server *httpServer) handleJoin(w http.ResponseWriter, r *http.Request) {
-	peerAddress := r.Header.Get("Peer-Address")
-	if peerAddress == "" {
-		server.logger.Error("Peer-Address not set on request")
-		w.WriteHeader(http.StatusBadRequest)
-	}
-
-	addPeerFuture := server.node.raftNode.AddVoter(
-		raft.ServerID(peerAddress), raft.ServerAddress(peerAddress), 0, 0)
-	if err := addPeerFuture.Error(); err != nil {
-		server.logger.Error("Error joining peer to Raft", zap.String("peer.remoteaddr", peerAddress), zap.Error(err))
-		statusInternalError(w)
-		return
-	}
-
-	server.logger.Info("Peer joined Raft", zap.String("peer.remoteaddr", peerAddress))
-	w.WriteHeader(http.StatusOK)
-}
+// func (server *httpServer) handleJoin(w http.ResponseWriter, r *http.Request) {
+// 	peerAddress := r.Header.Get("Peer-Address")
+// 	if peerAddress == "" {
+// 		server.logger.Error("Peer-Address not set on request")
+// 		w.WriteHeader(http.StatusBadRequest)
+// 	}
+//
+// 	addPeerFuture := server.node.raftNode.AddVoter(
+// 		raft.ServerID(peerAddress), raft.ServerAddress(peerAddress), 0, 0)
+// 	if err := addPeerFuture.Error(); err != nil {
+// 		server.logger.Error("Error joining peer to Raft", zap.String("peer.remoteaddr", peerAddress), zap.Error// (err))
+// 		statusInternalError(w)
+// 		return
+// 	}
+//
+// 	server.logger.Info("Peer joined Raft", zap.String("peer.remoteaddr", peerAddress))
+// 	w.WriteHeader(http.StatusOK)
+// }
 
 //~~~~~~~~~~~ Http Utils ~~~~~~~~~~~~~~~~~~~~~
 

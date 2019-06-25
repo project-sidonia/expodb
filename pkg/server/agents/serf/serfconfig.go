@@ -2,6 +2,7 @@ package serf
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/epsniff/expodb/pkg/config"
@@ -59,13 +60,13 @@ func createSerfConfig(config *config.Config, logger *zap.Logger, ch chan serf.Ev
 	serfConfig.Tags["ver"] = fmt.Sprintf("%s", version.ServerVersion)
 	//serfConfig.Tags["build"] = s.config.Build
 	//serfConfig.Tags["raft_vsn"] = fmt.Sprintf("%d", s.config.RaftConfig.ProtocolVersion)
-	// serfConfig.Tags["id"] = s.config.NodeID
-	// serfConfig.Tags["http_addr"] =
-	// serfConfig.Tags["http_port"] =
-	// serfConfig.Tags["raft_addr"] =
-	// serfConfig.Tags["raft_port"] =
-	// serfConfig.Tags["serf_addr"] =
-	// serfConfig.Tags["serf_port"] =
+	serfConfig.Tags["id"] = config.ID()
+	serfConfig.Tags["http_addr"] = config.HTTPBindAddress
+	serfConfig.Tags["http_port"] = strconv.Itoa(config.HTTPBindPort)
+	serfConfig.Tags["raft_addr"] = config.RaftBindAddress
+	serfConfig.Tags["raft_port"] = strconv.Itoa(config.RaftBindPort)
+	serfConfig.Tags["serf_addr"] = config.SerfAdvertiseAddr
+	serfConfig.Tags["serf_port"] = strconv.Itoa(config.SerfAdvertisePort)
 	// serfConfig.Tags["grpc_addr"] = // Address that clients will use to RPC to servers
 	// serfConfig.Tags["grpc_port"] = // Port servers use to RPC to one and another
 	if config.Bootstrap {

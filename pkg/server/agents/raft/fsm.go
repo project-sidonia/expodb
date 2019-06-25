@@ -2,53 +2,36 @@ package raft
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
-	"sync"
 
+	"github.com/epsniff/expodb/pkg/server/agents/raft/machines"
 	"github.com/hashicorp/raft"
 	"go.uber.org/zap"
 )
 
 type fsm struct {
-	mutex      sync.Mutex
-	logger     *zap.Logger
-	stateValue map[string]int
+	logger *zap.Logger
+
+	fsmProvider machines.FSMProvider
 }
 
 // Apply applies a Raft log entry to the key-value store.
 func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
-	buf := logEntry.Data[:len(logEntry.Data)-1] // The last byte should be the typeS
-	fsm.logger.Info("DEBUG", zap.ByteString("apply.Buf", buf))
-	msgType := logEntry.Data[len(logEntry.Data)-1:][0] // read just the last byte for the type
-	fsm.logger.Info("DEBUG", zap.ByteString("apply.type", []byte{msgType}))
-	switch msgType {
-	case KeyValType:
-		e, err := UnMarshalKeyValEvent(buf)
-		if err != nil {
-			fsm.logger.Error("Failed to unmarshal response", zap.Error(err))
-			return nil
-		}
-		switch e.RequestType {
-		case "set":
-			fsm.mutex.Lock()
-			defer fsm.mutex.Unlock()
-			fsm.stateValue[e.Key] = e.Value
-			fsm.logger.Info("DEBUG: Saving key", zap.Int(e.Key, e.Value))
-			return nil
-		default:
-			panic(fmt.Sprintf("Unrecognized key value event type in Raft log entry: %v. This is a bug.", e.RequestType))
-		}
-	default:
-		panic(fmt.Sprintf("Unrecognized raft message type in Raft log entry: `%v`. This is a bug.", msgType))
+	res, err := fsm.fsmProvider.Apply(logEntry)
+	if err != nil {
+		fsm.logger.Error("Failed to apply raft log to finite state machines: err:%v", zap.Error(err))
+		return err
 	}
+	return res
 }
 
 func (fsm *fsm) Snapshot() (raft.FSMSnapshot, error) {
-	fsm.mutex.Lock()
-	defer fsm.mutex.Unlock()
-
-	return &fsmSnapshot{stateValue: fsm.stateValue}, nil
+	state, err := fsm.fsmProvider.SnapshotAll()
+	if err != nil {
+		fsm.logger.Error("Failed to get snapshots from finite state machines: err:%v", zap.Error(err))
+		return nil, err
+	}
+	return &fsmSnapshot{state: state}, nil
 }
 
 // Restore stores the key-value store to a previous state.
@@ -57,7 +40,42 @@ func (fsm *fsm) Restore(serialized io.ReadCloser) error {
 	if err := json.NewDecoder(serialized).Decode(&snapshot); err != nil {
 		return err
 	}
-
-	fsm.stateValue = snapshot.stateValue
+	err := fsm.fsmProvider.RestoreAll(snapshot.state)
+	if err != nil {
+		fsm.logger.Error("Failed to get restore snapshots for finite state machines: err:%v", zap.Error(err))
+		return err
+	}
 	return nil
 }
+
+type fsmSnapshot struct {
+	state map[uint16][]byte `json:"snapshot_state"`
+}
+
+func (f *fsmSnapshot) Persist(sink raft.SnapshotSink) error {
+	err := func() error {
+		snapshotBytes, err := json.Marshal(f)
+		if err != nil {
+			return err
+		}
+
+		if _, err := sink.Write(snapshotBytes); err != nil {
+			return err
+		}
+
+		if err := sink.Close(); err != nil {
+			return err
+		}
+
+		return nil
+	}()
+
+	if err != nil {
+		sink.Cancel()
+		return err
+	}
+
+	return nil
+}
+
+func (f *fsmSnapshot) Release() {}

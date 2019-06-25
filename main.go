@@ -32,5 +32,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error configuring node: %s", err)
 		os.Exit(1)
 	}
-	srv.Serve()
+	if err := srv.Serve(); err != nil {
+		os.Exit(-1)
+	}
 }

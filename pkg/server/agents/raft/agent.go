@@ -2,22 +2,30 @@ package raft
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"path/filepath"
 	"time"
 
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/loggingutils"
+	"github.com/epsniff/expodb/pkg/server/agents/raft/machines"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"go.uber.org/zap"
 )
 
-func New(config *config.Config, logger *zap.Logger) (*raft.Raft, *fsm, error) {
+type Agent struct {
+	logger *zap.Logger
+
+	raftNode *raft.Raft
+	fsm      *fsm
+}
+
+func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
+	fsmp := machines.FSMProvider{}
 	fsm := &fsm{
-		stateValue: map[string]int{},
-		logger:     logger,
+		fsmProvider: fsmp,
+		logger:      logger,
 	}
 
 	// Construct Raft Address
@@ -35,7 +43,7 @@ func New(config *config.Config, logger *zap.Logger) (*raft.Raft, *fsm, error) {
 		loggingutils.NewLogWriter(transportLogger),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	snapshotStoreLogger := logger.Named("raft.snapshots")
@@ -46,19 +54,19 @@ func New(config *config.Config, logger *zap.Logger) (*raft.Raft, *fsm, error) {
 		loggingutils.NewLogWriter(snapshotStoreLogger),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	logStore, err := raftboltdb.NewBoltStore(
 		filepath.Join(config.RaftDataDir, "raft-log.bolt"),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	stableStore, err := raftboltdb.NewBoltStore(
 		filepath.Join(config.RaftDataDir, "raft-stable.bolt"),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	logger.Info("NewNode created raft node", zap.String("raft-config", fmt.Sprintf("%+v", raftConfig)))
@@ -72,34 +80,71 @@ func New(config *config.Config, logger *zap.Logger) (*raft.Raft, *fsm, error) {
 		transport,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if config.Bootstrap {
-		configuration := raft.Configuration{
-			Servers: []raft.Server{
-				{
-					ID:      raftConfig.LocalID,
-					Address: transport.LocalAddr(),
-				},
-			},
+		hasState, err := raft.HasExistingState(logStore, stableStore, snapshotStore)
+		if err != nil {
+			return nil, err
 		}
-		raftNode.BootstrapCluster(configuration)
+		if !hasState {
+			configuration := raft.Configuration{
+				Servers: []raft.Server{
+					{
+						ID:      raftConfig.LocalID,
+						Address: transport.LocalAddr(),
+					},
+				},
+			}
+			logger.Info("bootstrapping node")
+
+			f := raftNode.BootstrapCluster(configuration)
+			err := f.Error()
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
-	return raftNode, fsm, nil
+	return &Agent{
+		logger:   logger,
+		raftNode: raftNode,
+		fsm:      fsm}, nil
 }
 
-func raftTransport(raftAddr net.Addr, log io.Writer) (*raft.NetworkTransport, error) {
-	address, err := net.ResolveTCPAddr("tcp", raftAddr.String())
-	if err != nil {
-		return nil, err
-	}
+type RaftEntry interface {
+	Marshal() ([]byte, error)
+}
 
-	transport, err := raft.NewTCPTransport(address.String(), address, 3, 10*time.Second, log)
-	if err != nil {
-		return nil, err
-	}
+func (a *Agent) AddVoter(id, peerAddress string) error {
+	f := a.raftNode.AddVoter(raft.ServerID(id), raft.ServerAddress(peerAddress), 0, 10*time.Second)
+	return f.Error()
+}
 
-	return transport, nil
+func (a *Agent) Apply(key uint16, val RaftEntry) error {
+	data, err := val.Marshal()
+	if err != nil {
+		a.logger.Error("Failed to marshal raft entry", zap.Error(err))
+		return err
+	}
+	applyFuture := a.raftNode.Apply(data, 5*time.Second)
+	if err := applyFuture.Error(); err != nil {
+		a.logger.Error("Failed to apply raft log", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
+func (a *Agent) Add(key uint16, sm machines.StateMachine) error {
+	return a.fsm.fsmProvider.Add(key, sm)
+}
+
+func (a *Agent) IsLeader() bool {
+	return a.raftNode.State() == raft.Leader
+}
+
+func (a *Agent) Shutdown() error {
+	raftFuture := a.raftNode.Shutdown()
+	return raftFuture.Error()
 }
