@@ -17,5 +17,5 @@ $ bash run.sh 3
 
 ## Thanks to
 
- Using the `github.com/jen20/hashiconf-raft` project and gave me a head start on understanding the hashicorp raft libary..
+ Using the `github.com/jen20/hashiconf-raft` project, gave me a head start on understanding the hashicorp raft libary..
  
