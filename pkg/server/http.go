@@ -52,7 +52,7 @@ func (server *httpServer) handleRequest(w http.ResponseWriter, r *http.Request) 
 }
 
 func removeKeyPath(s string) string {
-	return strings.Replace(s, "/key", "", 1) // remove path so we can read URL
+	return strings.Replace(s, "/key/", "", 1) // remove path so we can read URL
 }
 
 func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) {

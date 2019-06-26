@@ -14,6 +14,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// RaftEntry all log entry most support this interface.
+type RaftEntry interface {
+	// By convention the messages self marshal and encode thier fsm type as the last
+	// 2 bytes of the bytes.
+	Marshal() ([]byte, error)
+}
+
+// Agent starts and manages a raft server and the primary FSM.
 type Agent struct {
 	logger *zap.Logger
 
@@ -113,15 +121,16 @@ func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
 		fsm:      fsm}, nil
 }
 
-type RaftEntry interface {
-	Marshal() ([]byte, error)
-}
-
+// AddVoter adds a voting peer to the raft consenses group.
+// Can only be called on the leader.
 func (a *Agent) AddVoter(id, peerAddress string) error {
 	f := a.raftNode.AddVoter(raft.ServerID(id), raft.ServerAddress(peerAddress), 0, 10*time.Second)
 	return f.Error()
 }
 
+// Apply is used to apply a command to the FSM in a highly consistent
+// manner.  This call blocks until the log is conserted commited or
+// until 5 seconds is reached.
 func (a *Agent) Apply(key uint16, val RaftEntry) error {
 	data, err := val.Marshal()
 	if err != nil {
@@ -136,12 +145,21 @@ func (a *Agent) Apply(key uint16, val RaftEntry) error {
 	return nil
 }
 
-func (a *Agent) Add(key uint16, sm machines.StateMachine) error {
+// AddStateMachine adds a child state machine that gets a subset of the logs.
+// The key is encoded into the raft messages and each child FSM is required to
+// Marshal that key into the last 2 bytes of it's message types.  This is used
+// for routing messages by the primary FSM.
+func (a *Agent) AddStateMachine(key uint16, sm machines.StateMachine) error {
 	return a.fsm.fsmProvider.Add(key, sm)
 }
 
 func (a *Agent) IsLeader() bool {
 	return a.raftNode.State() == raft.Leader
+}
+
+func (a *Agent) LeaderAddress() string {
+	leaderAddr := a.raftNode.Leader()
+	return string(leaderAddr)
 }
 
 func (a *Agent) Shutdown() error {

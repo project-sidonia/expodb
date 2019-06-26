@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 
@@ -18,12 +21,13 @@ import (
 
 type KvpStoreReader interface {
 	Get(key string) (string, error)
-	// NOTE to set a value use raftAgent.Set(keyvalstore.KVFSMKey, keyvalstore.NewKeyValEvent(...))
 }
 
 type server struct {
 	config *config.Config
 	logger *zap.Logger
+
+	metadata *metadata
 
 	serfAgent *serfagent.Agent
 
@@ -53,15 +57,19 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 		return nil, err
 	}
 	raftKvpStore := keyvalstore.New(logger.Named("raft-fsm-kvp"))
-	if err = raftAgent.Add(keyvalstore.KVFSMKey, raftKvpStore); err != nil {
+	if err = raftAgent.AddStateMachine(keyvalstore.KVFSMKey, raftKvpStore); err != nil {
 		logger.Error("", zap.Error(err))
 		return nil, err
 	}
 
 	ser := &server{
-		config:       config,
-		raftAgent:    raftAgent,
-		logger:       logger,
+		config: config,
+		logger: logger,
+
+		metadata: NewMetadata(),
+
+		raftAgent: raftAgent,
+
 		serfAgent:    serfAgent,
 		raftKvpStore: raftKvpStore,
 	}
@@ -72,14 +80,45 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	return ser, nil
 }
 
+// GetKeyVal gets a value from the raft key value fsm
 func (n *server) GetKeyVal(key string) (string, error) {
+	// if we allow stale reads, then we can read from non-leader
 	val, err := n.raftKvpStore.Get(key)
 	return val, err
 }
 
+// SetKeyVal sets a value in the raft key value fsm, if we aren't the
+// current leader then forward the request onto the leader node.
 func (n *server) SetKeyVal(key, value string) error {
-	// TODO find leader
-
+	if !n.raftAgent.IsLeader() {
+		// Find the leader by asking raft for the leader's address.  Then use the
+		// metadata we've collected from Serf (gossip) to find the leader's http
+		// address.
+		rAdd := n.raftAgent.LeaderAddress()
+		if rAdd == "" {
+			return fmt.Errorf("Raft leader not started")
+		}
+		leader, ok := n.metadata.FindByRaftAddr(rAdd)
+		if !ok {
+			return fmt.Errorf("Raft leader address not found")
+		}
+		url := fmt.Sprintf("http://%s/key/%s", leader.HttpAddr(), key)
+		request := struct {
+			Value string `json:"value"`
+		}{Value: value}
+		jsonStr, err := json.Marshal(request)
+		if err != nil {
+			n.logger.Error("Failed to marsal json", zap.Error(err))
+			return err
+		}
+		res, err := http.DefaultClient.Post(url, "application/json", bytes.NewBuffer(jsonStr))
+		if err != nil {
+			n.logger.Error("Failed to forward to leader", zap.Error(err), zap.String("url", url))
+			return err
+		}
+		res.Body.Close() // TODO read all
+		return nil
+	}
 	// if Not Leader make http request to leader to ask them to do the Set Command.
 
 	kve := keyvalstore.NewKeyValEvent(keyvalstore.SetOp, key, value)
@@ -95,33 +134,28 @@ func (n *server) HandleEvent(e serf.Event) {
 		n.logger.Info("Server Serf Handler: Member Join", zap.String("serf-event", fmt.Sprintf("%+v", me.Members)))
 
 		for _, m := range me.Members {
-			id, ok := m.Tags["id"] // TODO replace magic strings here and in serf-agent setup with consts..
-			if !ok {
-				n.logger.Warn("Server Serf Handler: Member Join: missing `id` tag?", zap.String("tags", fmt.Sprintf("%+v", m.Tags)))
+			nodedata, err := n.metadata.Add(m)
+			if err != nil {
+				n.logger.Error("Error processing metadata",
+					zap.String("serf.Member", fmt.Sprintf("%+v", m)), zap.Error(err),
+				)
 			}
-			peerAddr, ok := m.Tags["raft_addr"]
-			if !ok {
-				n.logger.Warn("Server Serf Handler: Member Join: missing `raft_addr` tag?", zap.String("tags", fmt.Sprintf("%+v", m.Tags)))
-			}
-			peerPort, ok := m.Tags["raft_port"]
-			if !ok {
-				n.logger.Warn("Server Serf Handler: Member Join: missing `raft_port` tag?", zap.String("tags", fmt.Sprintf("%+v", m.Tags)))
-			}
-			peerAddress := fmt.Sprintf("%s:%s", peerAddr, peerPort)
-
 			if !n.raftAgent.IsLeader() {
 				// We aren't the raft leader nothing else to do but to record the nodes metadata.
 				continue
 			}
 
 			// join new peer as a raft voter
-			err := n.raftAgent.AddVoter(id, peerAddress)
+			err = n.raftAgent.AddVoter(nodedata.Id(), nodedata.RaftAddr())
 			if err != nil {
 				n.logger.Error("Error joining peer to Raft",
-					zap.String("peer.remoteaddr", peerAddress), zap.Error(err),
+					zap.String("peer.id", nodedata.Id()),
+					zap.String("peer.remoteaddr", nodedata.RaftAddr()),
+					zap.Error(err),
 				)
 			}
-			n.logger.Info("Peer joined Raft", zap.String("peer.remoteaddr", peerAddress))
+			n.logger.Info("Peer joined Raft", zap.String("peer.id", nodedata.Id()),
+				zap.String("peer.remoteaddr", nodedata.RaftAddr()))
 		}
 	case serf.EventMemberReap:
 		me := e.(serf.MemberEvent)
