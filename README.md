@@ -2,7 +2,7 @@
 
 A simple demo of using raft and gossip working togather to make a data store that is distrubuted, consistent and HA key value data store. 
 
-## Build
+## Build and Running
 
 ```bash
 $ go get github.com/epsniff/expodb
@@ -13,6 +13,16 @@ $ # Running three nodes, each in their own terminal.
 $ bash run.sh 1 
 $ bash run.sh 2 
 $ bash run.sh 3 
+```
+
+## Testing
+
+```bash
+curl -XPOST localhost:8001/key/foo -d'{"value":"bar-42"}'
+curl localhost:8000/key/foo # Should return "bar-42" 
+
+curl -XPOST localhost:8002/key/foo -d'{"value":"bar-24"}'
+curl localhost:8001/key/foo # Should return "bar-24"
 ```
 
 ## Thanks to
