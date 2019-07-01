@@ -12,8 +12,8 @@ import (
 
 	"github.com/epsniff/expodb/pkg/config"
 	raftagent "github.com/epsniff/expodb/pkg/server/agents/raft"
-	"github.com/epsniff/expodb/pkg/server/agents/raft/machines/keyvalstore"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
+	"github.com/epsniff/expodb/pkg/server/state-machines/keyvalstore"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -175,6 +175,11 @@ func (n *server) Serve() error {
 	ctx, can := context.WithCancel(context.Background())
 	defer can()
 	g, ctx := errgroup.WithContext(ctx)
+
+	// Run monitoring leadership
+	g.Go(func() error {
+		return n.monitorLeadership(ctx)
+	})
 
 	// Run HTTP server
 	g.Go(func() error {
