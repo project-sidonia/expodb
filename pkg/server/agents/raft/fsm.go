@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/epsniff/expodb/pkg/server/agents/raft/machines"
+	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 	"github.com/hashicorp/raft"
 	"go.uber.org/zap"
 )

@@ -8,7 +8,7 @@ import (
 
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/loggingutils"
-	"github.com/epsniff/expodb/pkg/server/agents/raft/machines"
+	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"go.uber.org/zap"
@@ -25,8 +25,9 @@ type RaftEntry interface {
 type Agent struct {
 	logger *zap.Logger
 
-	raftNode *raft.Raft
-	fsm      *fsm
+	raftNode     *raft.Raft
+	raftNotifyCh chan bool
+	fsm          *fsm
 }
 
 func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
@@ -53,6 +54,9 @@ func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	raftNotifych := make(chan bool, 1)
+	raftConfig.NotifyCh = raftNotifych
 
 	snapshotStoreLogger := logger.Named("raft.snapshots")
 	const retain = 1
@@ -116,9 +120,16 @@ func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
 	}
 
 	return &Agent{
-		logger:   logger,
-		raftNode: raftNode,
-		fsm:      fsm}, nil
+		logger:       logger,
+		raftNode:     raftNode,
+		raftNotifyCh: raftNotifych,
+		fsm:          fsm}, nil
+}
+
+// NotifyCh is a channel that returns true if this agent has been elected as the
+// raft leader.
+func (a *Agent) LeaderNotifyCh() <-chan bool {
+	return a.raftNotifyCh
 }
 
 // AddVoter adds a voting peer to the raft consenses group.

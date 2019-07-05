@@ -3,7 +3,7 @@ package keyvalstore
 import (
 	"encoding/json"
 
-	"github.com/epsniff/expodb/pkg/server/agents/raft/machines"
+	"github.com/epsniff/expodb/pkg/server/state-machines"
 )
 
 const SetOp = "set"

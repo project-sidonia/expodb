@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/epsniff/expodb/pkg/server/agents/raft/machines"
+	"github.com/epsniff/expodb/pkg/server/state-machines"
 	"go.uber.org/zap"
 )
 

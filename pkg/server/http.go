@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/epsniff/expodb/pkg/server/agents/raft/machines/keyvalstore"
+	"github.com/epsniff/expodb/pkg/server/state-machines/keyvalstore"
 	"github.com/justinas/alice"
 	"go.uber.org/zap"
 )
