@@ -57,6 +57,7 @@ func (n *server) leaderLoop(ctx context.Context) error {
 			n.logger.Info("leader loop exiting")
 			return nil
 		}
+		// We are the leader, do leader stuff here.
 	}
 	return nil
 }
