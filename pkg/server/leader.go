@@ -22,7 +22,7 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 					n.logger.Warn("attempted to start the leader loop while running", zap.String("id", n.config.ID()))
 					continue
 				}
-				lCtx, lCan = context.WithCancel(context.Background())
+				lCtx, lCan = context.WithCancel(ctx)
 				leaderLoop.Add(1)
 				go func(ctx context.Context) {
 					defer leaderLoop.Done()
