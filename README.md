@@ -18,10 +18,16 @@ $ bash run.sh 3
 ## Testing
 
 ```bash
+# Set a key on node 1
 curl -XPOST localhost:8001/key/foo -d'{"value":"bar-42"}'
+
+# Now read that key from node 0
 curl localhost:8000/key/foo # Should return "bar-42" 
 
+# Now set a key using node 2
 curl -XPOST localhost:8002/key/foo -d'{"value":"bar-24"}'
+
+# Now read the key from node 1 again
 curl localhost:8001/key/foo # Should return "bar-24"
 ```
 
