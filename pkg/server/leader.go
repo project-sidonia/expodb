@@ -7,6 +7,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// monitorLeadership monitors the raft agent's leadership channel to detected when this node has been promoted
+// to a leader.  After taking over leadership, it begins running the leader loop.  If it loses leadership
+// then it kills the leader loop and stops running it.
 func (n *server) monitorLeadership(ctx context.Context) error {
 
 	leaderCh := n.raftAgent.LeaderNotifyCh()
@@ -49,7 +52,8 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 		}
 	}
 }
-
+// leaderLoop is the code you want the leader to run.  For example, if you neeed a job 
+// started ever N mins, this would be a good place to put it.
 func (n *server) leaderLoop(ctx context.Context) error {
 	for {
 		select {
