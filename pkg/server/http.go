@@ -18,6 +18,7 @@ type httpServer struct {
 	logger  *zap.Logger
 }
 
+// Start starts the http server
 func (server *httpServer) Start() {
 	server.logger.Info("Starting http server", zap.String("address", server.address.String()))
 	// .Str("address", server.address.String()).Msg()
