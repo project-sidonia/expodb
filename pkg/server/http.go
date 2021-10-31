@@ -57,7 +57,10 @@ func removeKeyPath(s string) string {
 
 func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) {
 	request := struct {
-		Value string `json:"value"`
+		Table  string `json:"table"`
+		Column string `json:"column"`
+		Type   string `json:"type"`
+		Value  string `json:"value"`
 	}{}
 
 	key := removeKeyPath(r.URL.Path)
