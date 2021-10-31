@@ -21,6 +21,28 @@ type hclog2ZapLogger struct {
 	baseZap *zap.Logger
 }
 
+// Args are alternating key, val pairs
+// keys must be strings
+// vals can be any type, but display is implementation specific
+// Emit a message and key/value pairs at a provided log level
+func (l hclog2ZapLogger) Log(level hclog.Level, msg string, args ...interface{}) {
+	switch level {
+	case hclog.Debug:
+		l.zap.Debug(msg, argsToFields(args...)...)
+	case hclog.Trace:
+	case hclog.Info:
+		l.zap.Info(msg, argsToFields(args...)...)
+	case hclog.Warn:
+		l.zap.Warn(msg, argsToFields(args...)...)
+	case hclog.Error:
+		l.zap.Error(msg, argsToFields(args...)...)
+	}
+
+}
+
+// Returns the Name of the logger
+func (l hclog2ZapLogger) Name() string { return "zap-to-hclog-wrapper" }
+
 // Trace implementation.
 func (l hclog2ZapLogger) Trace(msg string, args ...interface{}) {}
 
@@ -73,6 +95,11 @@ func (l hclog2ZapLogger) Named(name string) hclog.Logger {
 func (l hclog2ZapLogger) ResetNamed(name string) hclog.Logger {
 	// no need to implement that as go-plugin doesn't use this method.
 	return hclog2ZapLogger{baseZap: l.zap, zap: l.zap}
+}
+
+// ImpliedArgs returns With key/value pairs
+func (l hclog2ZapLogger) ImpliedArgs() []interface{} {
+	return nil
 }
 
 // SetLevel implementation.
