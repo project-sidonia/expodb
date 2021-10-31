@@ -3,3 +3,7 @@ node*/
 expodb
 testrequest
 .idea/
+
+# directories created by the raft and seft libaries. 
+raft-default/
+serf-default/
