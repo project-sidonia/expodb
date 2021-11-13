@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/epsniff/expodb/pkg/config"
@@ -12,9 +11,12 @@ import (
 )
 
 func main() {
-	logger, err := zap.NewProduction()
+
+	var cfg = zap.NewProductionConfig()
+	cfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	logger, err := cfg.Build()
 	if err != nil {
-		log.Fatalf("can't initialize zap logger: %v", err)
+		panic(err)
 	}
 	defer logger.Sync()
 

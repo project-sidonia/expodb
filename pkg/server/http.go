@@ -32,48 +32,49 @@ func (server *httpServer) Start() {
 
 func (server *httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/key") {
-		server.handleRequest(w, r)
-		//  } else if strings.HasPrefix(r.URL.Path, "/join") {
-		//	   server.handleJoin(w, r)
+		server.handleKeyRequest(w, r)
+		//	} else if strings.HasPrefix(r.URL.Path, "/join") {
+		//		server.handleJoin(w, r)
 	} else {
 		w.WriteHeader(http.StatusBadRequest)
 	}
 }
 
-func (server *httpServer) handleRequest(w http.ResponseWriter, r *http.Request) {
+func (server *httpServer) handleKeyRequest(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
-		server.handleKeyPost(w, r)
+		switch {
+		case strings.Contains(r.URL.Path, "/_update"):
+			server.handleKeyUpdate(w, r)
+		case strings.Contains(r.URL.Path, "/_fetch"):
+			server.handleKeyFetch(w, r)
+		case strings.Contains(r.URL.Path, "/_query"):
+			server.handleKeyFetch(w, r)
+		}
 		return
 	case http.MethodGet:
-		server.handleKeyGet(w, r)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	w.WriteHeader(http.StatusMethodNotAllowed)
+	w.WriteHeader(http.StatusBadRequest)
 }
 
-func removeKeyPath(s string) string {
-	return strings.Replace(s, "/key/", "", 1) // remove path so we can read URL
-}
-
-func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) {
-	request := struct {
+func (server *httpServer) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
+	req := struct {
 		Table  string `json:"table"`
+		RowKey string `json:"key"`
 		Column string `json:"column"`
-		Type   string `json:"type"`
 		Value  string `json:"value"`
 	}{}
 
-	key := removeKeyPath(r.URL.Path)
-
 	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		server.logger.Error("Bad request", zap.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	if err := server.node.SetKeyVal(key, request.Value); err != nil {
+	if err := server.node.SetKeyVal(req.Table, req.RowKey, req.Column, req.Value); err != nil {
 		server.logger.Error("Failed to set keyvalue", zap.Error(err))
 		statusInternalError(w)
 		return
@@ -82,21 +83,34 @@ func (server *httpServer) handleKeyPost(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 }
 
-func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
+func (server *httpServer) handleKeyFetch(w http.ResponseWriter, r *http.Request) {
 
-	key := removeKeyPath(r.URL.Path)
-	val, err := server.node.GetKeyVal(key)
+	req := struct {
+		Table string `json:"table"`
+		Key   string `json:"key"`
+	}{}
+	defer r.Body.Close()
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		server.logger.Error("Bad request", zap.Error(err))
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	val, err := server.node.GetByRowKey(req.Table, req.Key)
 	if err == keyvalstore.ErrKeyNotFound {
 		statusNotFound(w)
 		return
+	} else if err != nil {
+		server.logger.Error("Failed to get key from statemachine", zap.Error(err))
+		statusInternalError(w)
+		return
 	}
 	response := struct {
-		Value    string `json:"value"`
-		IsLeader bool   `json:"leader"`
-		Nodes    string `json:"nodes"`
+		Result   map[string]string `json:"result"`
+		IsLeader bool              `json:"leader"`
+		// Nodes    string            `json:"nodes"`
 	}{
-		Value:    val,
+		Result:   val,
 		IsLeader: server.node.raftAgent.IsLeader(), // just for debugging
 	}
 
@@ -107,6 +121,49 @@ func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseBytes)
+}
+
+func (server *httpServer) handleKeyQuery(w http.ResponseWriter, r *http.Request) {
+
+	req := struct {
+		Table string `json:"table"`
+		Query string `json:"query"`
+	}{}
+	defer r.Body.Close()
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		server.logger.Error("Bad request", zap.Error(err))
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	vals, err := server.node.GetByRowByQuery(req.Table, req.Query)
+	if err == keyvalstore.ErrKeyNotFound {
+		statusNotFound(w)
+		return
+	} else if err != nil {
+		server.logger.Error("Failed to query statemachine", zap.Error(err))
+		statusInternalError(w)
+		return
+	}
+	response := struct {
+		Results  []map[string]string `json:"results"`
+		IsLeader bool                `json:"leader"`
+		// Nodes    string            `json:"nodes"`
+	}{
+		Results:  vals,
+		IsLeader: server.node.raftAgent.IsLeader(), // just for debugging
+	}
+
+	responseBytes, err := json.Marshal(response)
+	if err != nil {
+		server.logger.Error("Failed to marshal response", zap.Error(err))
+		statusInternalError(w)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 	w.Write(responseBytes)
 }
 
@@ -130,7 +187,6 @@ func (server *httpServer) handleKeyGet(w http.ResponseWriter, r *http.Request) {
 // }
 
 //~~~~~~~~~~~ Http Utils ~~~~~~~~~~~~~~~~~~~~~
-
 func statusNotFound(w http.ResponseWriter) {
 	status := http.StatusNotFound
 	w.WriteHeader(status)

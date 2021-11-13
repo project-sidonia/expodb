@@ -2,22 +2,27 @@ package keyvalstore
 
 import (
 	"encoding/json"
+	"fmt"
 
-	"github.com/epsniff/expodb/pkg/server/state-machines"
+	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 )
 
 const SetOp = "set"
 
 type KeyValEvent struct {
 	RequestType string
-	Key         string
+	Table       string
+	Column      string
+	RowKey      string
 	Value       string
 }
 
-func NewKeyValEvent(requestType string, key string, value string) KeyValEvent {
+func NewKeyValEvent(requestType, table, col, rowKey, value string) KeyValEvent {
 	return KeyValEvent{
 		RequestType: requestType,
-		Key:         key,
+		Table:       table,
+		Column:      col,
+		RowKey:      rowKey,
 		Value:       value,
 	}
 }
@@ -29,4 +34,12 @@ func (k KeyValEvent) Marshal() ([]byte, error) {
 		return nil, err
 	}
 	return machines.EncodeRaftType(KVFSMKey, res), nil
+}
+
+func UnmarshalKeyValEvent(buf []byte) (KeyValEvent, error) {
+	var e KeyValEvent
+	if err := json.Unmarshal(buf, &e); err != nil {
+		fmt.Errorf("Failed unmarshaling KeyValEvent. error:%v", err)
+	}
+	return e, nil
 }

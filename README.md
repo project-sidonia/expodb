@@ -18,20 +18,16 @@ $ bash run.sh 3
 ## Testing
 
 ```bash
-# Set a key on node 1
-curl -XPOST localhost:8001/key/foo -d'{"value":"bar-42"}'
+# Set a key on node 0
+curl -XPOST localhost:8000/key/_update -d'{"table":"t1", "key":"k1","column":"name", "value":"eric"}'
+curl -XPOST localhost:8000/key/_update -d'{"table":"t1", "key":"k1","column":"state", "value":"WA"}'
 
 # Now read that key from node 0
-curl localhost:8000/key/foo # Should return "bar-42" 
+curl -XPOST localhost:8000/key/_fetch -d'{"table":"t1", "key":"k1"}'
 
-# Now set a key using node 2
-curl -XPOST localhost:8002/key/foo -d'{"value":"bar-24"}'
-
-# Now read the key from node 1 again
-curl localhost:8001/key/foo # Should return "bar-24"
 ```
 
 ## Thanks to
 
- Using the `github.com/jen20/hashiconf-raft` project, gave me a head start on understanding the hashicorp raft libary..
+ Using the `github.com/jen20/hashiconf-raft` project, gave me a head start on understanding the hashicorp raft library.
  

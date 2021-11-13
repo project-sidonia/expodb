@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/epsniff/expodb/pkg/server/state-machines"
+	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 	"go.uber.org/zap"
 )
 
@@ -22,40 +22,67 @@ func Register(reg machines.FSMProvider, kvfsm *KeyValStateMachine) error {
 func New(logger *zap.Logger) *KeyValStateMachine {
 	return &KeyValStateMachine{
 		logger:     logger,
-		stateValue: map[string]string{},
+		stateValue: map[string]map[string]map[string]string{},
 	}
 }
 
 type KeyValStateMachine struct {
 	mutex      sync.RWMutex
 	logger     *zap.Logger
-	stateValue map[string]string
+	stateValue map[string]map[string]map[string]string
 }
 
 // Apply raft log update
-func (kv *KeyValStateMachine) Get(key string) (string, error) {
+func (kv *KeyValStateMachine) Get(table, rowkey string) (map[string]string, error) {
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
-	val, ok := kv.stateValue[key]
-	if !ok {
-		return "", ErrKeyNotFound
+
+	if table == "" {
+		return nil, fmt.Errorf("KeyValStateMachine: no table provided ")
 	}
-	return val, nil
+
+	if rowkey == "" {
+		return nil, fmt.Errorf("KeyValStateMachine: no rowkey provided ")
+	}
+
+	tab, ok := kv.stateValue[table]
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+	row, ok := tab[rowkey]
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+	return row, nil
 }
 
 // Apply raft log update
 func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
-	e, err := kv.unmarshalKeyValEvent(delta)
+	e, err := UnmarshalKeyValEvent(delta)
 	if err != nil {
-		kv.logger.Error("Failed to unmarshal response", zap.Error(err))
+		kv.logger.Error("KeyValStateMachine failed to unmarshal kv event:", zap.Error(err))
 		return nil, err
 	}
 	switch e.RequestType {
 	case SetOp:
 		kv.mutex.Lock()
 		defer kv.mutex.Unlock()
-		kv.stateValue[e.Key] = e.Value
-		kv.logger.Debug("RequestType:KVP: key/val stored", zap.String(e.Key, e.Value))
+		tab, ok := kv.stateValue[e.Table]
+		if !ok {
+			tab = map[string]map[string]string{}
+			kv.stateValue[e.Table] = tab
+		}
+		row, ok := tab[e.RowKey]
+		if !ok {
+			row = map[string]string{}
+			tab[e.RowKey] = row
+		}
+		row[e.Column] = e.Value
+		kv.logger.Debug("RequestType:KVP: update row",
+			zap.String("table", e.Table),
+			zap.String("rowkey", e.RowKey),
+			zap.String("column", e.Column),
+			zap.String("val", e.Value))
 		return nil, nil
 	default:
 		panic(fmt.Sprintf("Unrecognized key value event type in Raft log entry: %v. This is a bug.", e.RequestType))
@@ -78,12 +105,4 @@ func (kv *KeyValStateMachine) Persist() ([]byte, error) {
 		return nil, fmt.Errorf("KeyValStateMachine persist error: %v", err)
 	}
 	return data, nil
-}
-
-func (kv *KeyValStateMachine) unmarshalKeyValEvent(buf []byte) (KeyValEvent, error) {
-	var e KeyValEvent
-	if err := json.Unmarshal(buf, &e); err != nil {
-		fmt.Errorf("Failed unmarshaling Raft log entry. error:%v", err)
-	}
-	return e, nil
 }

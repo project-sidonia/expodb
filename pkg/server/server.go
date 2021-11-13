@@ -20,7 +20,7 @@ import (
 )
 
 type KvpStoreReader interface {
-	Get(key string) (string, error)
+	Get(table, rowkey string) (map[string]string, error)
 }
 
 type server struct {
@@ -80,16 +80,21 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	return ser, nil
 }
 
-// GetKeyVal gets a value from the raft key value fsm
-func (n *server) GetKeyVal(key string) (string, error) {
-	// if we allow stale reads, then we can read from non-leader
-	val, err := n.raftKvpStore.Get(key)
+// GetByRowKey gets a value from the raft key value fsm
+func (n *server) GetByRowKey(table, key string) (map[string]string, error) {
+	val, err := n.raftKvpStore.Get(table, key)
 	return val, err
+}
+
+// GetByRowByQuery gets values from the raft key value fsm using a SQL query
+func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, error) {
+	vals, err := n.raftKvpStore.GetByQuery(table, query)
+	return vals, err
 }
 
 // SetKeyVal sets a value in the raft key value fsm, if we aren't the
 // current leader then forward the request onto the leader node.
-func (n *server) SetKeyVal(key, value string) error {
+func (n *server) SetKeyVal(table, key, col, val string) error {
 	if !n.raftAgent.IsLeader() {
 		// Find the leader by asking raft for the leader's address.  Then use the
 		// metadata we've collected from Serf (gossip) to find the leader's http
@@ -102,10 +107,14 @@ func (n *server) SetKeyVal(key, value string) error {
 		if !ok {
 			return fmt.Errorf("Raft leader address not found")
 		}
-		url := fmt.Sprintf("http://%s/key/%s", leader.HttpAddr(), key)
+		url := fmt.Sprintf("http://%s/key/_update", leader.HttpAddr(), key)
 		request := struct {
-			Value string `json:"value"`
-		}{Value: value}
+			Table  string `json:"table"`
+			RowKey string `json:"key"`
+			Column string `json:"column"`
+			Value  string `json:"value"`
+		}{table, key, col, val}
+
 		jsonStr, err := json.Marshal(request)
 		if err != nil {
 			n.logger.Error("Failed to marsal json", zap.Error(err))
@@ -121,7 +130,7 @@ func (n *server) SetKeyVal(key, value string) error {
 	}
 	// if Not Leader make http request to leader to ask them to do the Set Command.
 
-	kve := keyvalstore.NewKeyValEvent(keyvalstore.SetOp, key, value)
+	kve := keyvalstore.NewKeyValEvent(keyvalstore.SetOp, table, col, key, val)
 	return n.raftAgent.Apply(keyvalstore.KVFSMKey, kve)
 }
 

@@ -10,6 +10,17 @@ function usage() {
     echo "   run-node.sh <node number (1-5)>"
 }
 
+if [[ "$PWD" == */scripts ]]; then
+    echo "already in the scripts directory"
+else
+    echo "changing directory to scripts"
+    pushd ./scripts
+    function finish {
+        popd
+    }
+    trap finish EXIT
+fi
+
 go build ../.
 
 if [ -z ${node_number} ] ; then
