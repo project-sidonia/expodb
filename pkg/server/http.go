@@ -49,7 +49,7 @@ func (server *httpServer) handleKeyRequest(w http.ResponseWriter, r *http.Reques
 		case strings.Contains(r.URL.Path, "/_fetch"):
 			server.handleKeyFetch(w, r)
 		case strings.Contains(r.URL.Path, "/_query"):
-			server.handleKeyFetch(w, r)
+			server.handleKeyQuery(w, r)
 		}
 		return
 	case http.MethodGet:

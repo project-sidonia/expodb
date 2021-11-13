@@ -88,8 +88,9 @@ func (n *server) GetByRowKey(table, key string) (map[string]string, error) {
 
 // GetByRowByQuery gets values from the raft key value fsm using a SQL query
 func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, error) {
-	vals, err := n.raftKvpStore.GetByQuery(table, query)
-	return vals, err
+	panic("not implemented")
+	// vals, err := n.raftKvpStore.GetByQuery(table, query)
+	// return vals, err
 }
 
 // SetKeyVal sets a value in the raft key value fsm, if we aren't the
