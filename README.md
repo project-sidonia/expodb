@@ -2,7 +2,7 @@
 
 A simple demo database that uses raft and gossip working togather to make a data store that is distrubuted, consistent, and HA. 
 
-For this project, I always favor readablity of the code over maintainablity, as the goal of this project is more of a teaching/learning tool, than anything I would ever push into production. 
+For this project, I always favor readablity and simplicity of the code over maintainablity.  The goal of this project is to be a teaching and learning tool, not something one would use in production. 
 
 ### TODO
 
