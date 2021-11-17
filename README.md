@@ -1,6 +1,8 @@
 # Description
 
-A simple demo of using raft and gossip working togather to make a data store that is distrubuted, consistent, and HA. 
+A simple demo database that uses raft and gossip working togather to make a data store that is distrubuted, consistent, and HA. 
+
+For this project, I always favor readablity of the code over maintainablity, as the goal of this project is more of a teaching/learning tool, than anything I would ever push into production. 
 
 ### TODO
 
