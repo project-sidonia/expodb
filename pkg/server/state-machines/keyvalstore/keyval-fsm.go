@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	machines "github.com/epsniff/expodb/pkg/server/state-machines"
+	"github.com/lytics/qlbridge/rel"
 	"go.uber.org/zap"
 )
 
@@ -30,6 +31,28 @@ type KeyValStateMachine struct {
 	mutex      sync.RWMutex
 	logger     *zap.Logger
 	stateValue map[string]map[string]map[string]string
+}
+
+func (kv *KeyValStateMachine) GetByQuery(table, query string) ([]map[string]string, error) {
+	kv.mutex.RLock()
+	defer kv.mutex.RUnlock()
+
+	sel, err := rel.ParseSqlSelect(query)
+	if err != nil {
+		return nil, err
+	}
+
+	sel.From
+
+	if table == "" {
+		return nil, fmt.Errorf("KeyValStateMachine: no table provided ")
+	}
+
+	tab, ok := kv.stateValue[table]
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+
 }
 
 // Apply raft log update
