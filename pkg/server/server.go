@@ -21,6 +21,7 @@ import (
 
 type KvpStoreReader interface {
 	Get(table, rowkey string) (map[string]string, error)
+	GetByQuery(table, query string) ([]map[string]string, error)
 }
 
 type server struct {
@@ -89,8 +90,8 @@ func (n *server) GetByRowKey(table, key string) (map[string]string, error) {
 // GetByRowByQuery gets values from the raft key value fsm using a SQL query
 func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, error) {
 	panic("not implemented")
-	// vals, err := n.raftKvpStore.GetByQuery(table, query)
-	// return vals, err
+	vals, err := n.raftKvpStore.GetByQuery(table, query)
+	return vals, err
 }
 
 // SetKeyVal sets a value in the raft key value fsm, if we aren't the

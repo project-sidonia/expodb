@@ -18,6 +18,7 @@ require (
 	github.com/hashicorp/raft-boltdb v0.0.0-20210422161416-485fa74b0b01
 	github.com/hashicorp/serf v0.9.5
 	github.com/justinas/alice v1.2.0
+	github.com/lytics/qlbridge v0.1.3 // indirect
 	github.com/mattn/go-colorable v0.1.11 // indirect
 	github.com/miekg/dns v1.1.43 // indirect
 	github.com/ogier/pflag v0.0.1
