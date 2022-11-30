@@ -30,6 +30,7 @@ type Agent struct {
 	fsm          *fsm
 }
 
+// New creates a new raft server.
 func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
 	fsmp := machines.FSMProvider{}
 	fsm := &fsm{
@@ -164,15 +165,18 @@ func (a *Agent) AddStateMachine(key uint16, sm machines.StateMachine) error {
 	return a.fsm.fsmProvider.Add(key, sm)
 }
 
+// IsLeader returns true if this agent is the leader.
 func (a *Agent) IsLeader() bool {
 	return a.raftNode.State() == raft.Leader
 }
 
+// LeaderAddr returns the address of the leader.
 func (a *Agent) LeaderAddress() string {
 	leaderAddr := a.raftNode.Leader()
 	return string(leaderAddr)
 }
 
+// Shutdown stops the raft server.
 func (a *Agent) Shutdown() error {
 	raftFuture := a.raftNode.Shutdown()
 	return raftFuture.Error()
