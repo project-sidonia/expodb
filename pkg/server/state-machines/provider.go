@@ -7,12 +7,21 @@ import (
 	"github.com/hashicorp/raft"
 )
 
+// StateMachine is the interface that all state machines must implement.
 type StateMachine interface {
-	Apply(delta []byte) (interface{}, error) // Apply raft log update
-	Restore(data []byte) error               // Restore a subsection from snapshot
-	Persist() ([]byte, error)                // Save state as bytes for snapshot
+	// Apply raft log update for this state machine
+	Apply(delta []byte) (interface{}, error)
+
+	// Restore a subsection from snapshot for this state machine
+	Restore(data []byte) error
+
+	// Save state as bytes for snapshot for this state machine
+	Persist() ([]byte, error)
 }
 
+// FSMProvider is a map of StateMachine's keyed by a uint16, this is used to lookup
+// the correct state machine to apply a raft log to. Which is used by the raft.FSM
+// interfaces to apply a raft log to the correct state machine.
 type FSMProvider map[uint16]StateMachine
 
 // Add a new handler to the registry, this most be done in an init style at startup
@@ -44,6 +53,8 @@ func (fsmr FSMProvider) Apply(logEntry *raft.Log) (interface{}, error) {
 	return handler.Apply(data)
 }
 
+// SnapshotAll returns a map of all the state machines snapshot data, this is used by the raft.FSM
+// interface to snapshot all the state machines.
 func (fsmr FSMProvider) SnapshotAll() (map[uint16][]byte, error) {
 	s := map[uint16][]byte{}
 	for k, fsm := range fsmr {
@@ -56,6 +67,8 @@ func (fsmr FSMProvider) SnapshotAll() (map[uint16][]byte, error) {
 	return s, nil
 }
 
+// RestoreAll restores all the state machines from a snapshot, this is used by the raft.FSM
+// interface to restore all the state machines.
 func (fsmr FSMProvider) RestoreAll(vals map[uint16][]byte) error {
 	for k, fsm := range fsmr {
 		data, ok := vals[k]

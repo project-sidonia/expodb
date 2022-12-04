@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/serf/serf"
 )
 
+// metadata contains the state of cluster, and is used to
+// provide raft address and http address for nodes in the cluster.
 type metadata struct {
 	mu sync.RWMutex
 
@@ -21,6 +23,7 @@ func NewMetadata() *metadata {
 	}
 }
 
+// Add adds a node to the metadata.
 func (m *metadata) Add(me serf.Member) (*nodedata, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -33,6 +36,7 @@ func (m *metadata) Add(me serf.Member) (*nodedata, error) {
 	return meta, nil
 }
 
+// FindByRaftAddr finds a node by its raft address.
 func (m *metadata) FindByRaftAddr(n string) (*nodedata, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -47,6 +51,7 @@ type nodedata struct {
 	httpAddr string
 }
 
+// nodeDataFromSerf returns a nodedata from a serf member.
 func nodeDataFromSerf(m serf.Member) (*nodedata, error) {
 	id, ok := m.Tags["id"] // TODO replace magic strings here and in serf-agent setup with consts..
 	if !ok {
@@ -80,14 +85,17 @@ func nodeDataFromSerf(m serf.Member) (*nodedata, error) {
 	}, nil
 }
 
+// ID returns the ID of the current node.
 func (n *nodedata) Id() string {
 	return n.id
 }
 
+// RafAddr returns the raft address of the current node.
 func (n *nodedata) RaftAddr() string {
 	return n.raftAddr
 }
 
+// HttpAddr returns the http address of the current node.
 func (n *nodedata) HttpAddr() string {
 	return n.httpAddr
 }

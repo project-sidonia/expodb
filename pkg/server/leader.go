@@ -52,7 +52,8 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 		}
 	}
 }
-// leaderLoop is the code you want the leader to run.  For example, if you neeed a job 
+
+// leaderLoop is the code you want the leader to run.  For example, if you need a job
 // started ever N mins, this would be a good place to put it.
 func (n *server) leaderLoop(ctx context.Context) error {
 	for {
