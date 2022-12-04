@@ -1,4 +1,4 @@
-package keyvalstore
+package datastore
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 )
 
-const SetOp = "set"
+const UpdateRowOp = "update_row"
 
 type KeyValEvent struct {
 	RequestType string

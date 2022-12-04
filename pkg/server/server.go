@@ -13,7 +13,7 @@ import (
 	"github.com/epsniff/expodb/pkg/config"
 	raftagent "github.com/epsniff/expodb/pkg/server/agents/raft"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
-	"github.com/epsniff/expodb/pkg/server/state-machines/keyvalstore"
+	"github.com/epsniff/expodb/pkg/server/state-machines/datastore"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -56,8 +56,8 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 		logger.Error("Failed to create raft agent", zap.Error(err))
 		return nil, err
 	}
-	raftKvpStore := keyvalstore.New(logger.Named("raft-fsm-kvp"))
-	if err = raftAgent.AddStateMachine(keyvalstore.KVFSMKey, raftKvpStore); err != nil {
+	raftKvpStore := datastore.New(logger.Named("raft-fsm-kvp"))
+	if err = raftAgent.AddStateMachine(datastore.KVFSMKey, raftKvpStore); err != nil {
 		logger.Error("", zap.Error(err))
 		return nil, err
 	}
@@ -131,8 +131,8 @@ func (n *server) SetKeyVal(table, key, col, val string) error {
 	}
 	// if Not Leader make http request to leader to ask them to do the Set Command.
 
-	kve := keyvalstore.NewKeyValEvent(keyvalstore.SetOp, table, col, key, val)
-	return n.raftAgent.Apply(keyvalstore.KVFSMKey, kve)
+	kve := datastore.NewKeyValEvent(datastore.UpdateRowOp, table, col, key, val)
+	return n.raftAgent.Apply(datastore.KVFSMKey, kve)
 }
 
 // HandleEvent is our tap into serf events.  As the Serf(aka gossip) agent detects changes to the cluster

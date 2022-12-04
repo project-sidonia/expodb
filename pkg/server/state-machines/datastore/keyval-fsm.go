@@ -1,4 +1,4 @@
-package keyvalstore
+package datastore
 
 import (
 	"encoding/json"
@@ -64,9 +64,10 @@ func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
 		return nil, err
 	}
 	switch e.RequestType {
-	case SetOp:
+	case UpdateRowOp:
 		kv.mutex.Lock()
 		defer kv.mutex.Unlock()
+
 		tab, ok := kv.stateValue[e.Table]
 		if !ok {
 			tab = map[string]map[string]string{}

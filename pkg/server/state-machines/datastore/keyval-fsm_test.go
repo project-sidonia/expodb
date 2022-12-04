@@ -1,4 +1,4 @@
-package keyvalstore
+package datastore
 
 import (
 	"reflect"
@@ -75,7 +75,7 @@ func TestKeyValStateMachine_Apply(t *testing.T) {
 		delta []byte
 	}
 
-	val := NewKeyValEvent(SetOp, "table1", "rowkey1", "col1", "val1")
+	val := NewKeyValEvent(UpdateRowOp, "table1", "rowkey1", "col1", "val1")
 	valBytes, err := val.Marshal()
 	if err != nil {
 		t.Errorf("KeyValStateMachine.Apply() error = %v", err)
