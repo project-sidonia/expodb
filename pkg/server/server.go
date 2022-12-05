@@ -12,6 +12,7 @@ import (
 	"github.com/epsniff/expodb/pkg/config"
 	raftagent "github.com/epsniff/expodb/pkg/server/agents/raft"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
+	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 	"github.com/epsniff/expodb/pkg/server/state-machines/datastore"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
@@ -22,6 +23,16 @@ type KvpStoreReader interface {
 	Get(table, rowkey string) (map[string]string, error)
 }
 
+type RaftAgent interface {
+	IsLeader() bool
+	LeaderAddress() string
+	Apply(key uint16, val raftagent.RaftEntry) error
+	AddStateMachine(key uint16, sm machines.StateMachine) error
+	AddVoter(id, peerAddress string) error
+	Shutdown() error
+	LeaderNotifyCh() <-chan bool
+}
+
 type server struct {
 	config *config.Config
 	logger *zap.Logger
@@ -30,7 +41,7 @@ type server struct {
 
 	serfAgent *serfagent.Agent
 
-	raftAgent    *raftagent.Agent
+	raftAgent    RaftAgent
 	raftKvpStore KvpStoreReader
 }
 

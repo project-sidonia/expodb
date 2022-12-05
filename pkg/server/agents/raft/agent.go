@@ -152,7 +152,7 @@ func (a *Agent) AddVoter(id, peerAddress string) error {
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
-// manner.  This call blocks until the log is conserted commited or
+// manner.  This call blocks until the log is consented committed or
 // until 5 seconds is reached.
 func (a *Agent) Apply(key uint16, val RaftEntry) error {
 	data, err := val.Marshal()
@@ -183,6 +183,7 @@ func (a *Agent) IsLeader() bool {
 
 // LeaderAddr returns the address of the leader.
 func (a *Agent) LeaderAddress() string {
+	// TODO Leader() is deprecated, use LeaderWithID instead.
 	leaderAddr := a.raftNode.Leader()
 	return string(leaderAddr)
 }
