@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 
 	"github.com/epsniff/expodb/pkg/config"
 	raftagent "github.com/epsniff/expodb/pkg/server/agents/raft"
@@ -181,8 +180,8 @@ func (n *server) HandleEvent(e serf.Event) {
 // Serve runs the server's agents and blocks until one of the following:
 // 1) An agent returns an error
 // 2) A Ctrl-C signal is catch.
-func (n *server) Serve() error {
-	ctx, can := context.WithCancel(context.Background())
+func (n *server) Serve(ctx context.Context) error {
+	ctx, can := context.WithCancel(ctx)
 	defer can()
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -224,18 +223,6 @@ func (n *server) Serve() error {
 		<-n.serfAgent.ShutdownCh() // wait for the serf agent to shutdown
 		can()
 		n.logger.Info("The serf agent shutdown successfully")
-		return nil
-	})
-
-	// Handler for Ctrl+C and then call n.serfag.Shutdown()
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	g.Go(func() error {
-		select {
-		case <-ctx.Done():
-		case <-signalChan:
-			can()
-		}
 		return nil
 	})
 

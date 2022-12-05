@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/server"
@@ -36,7 +38,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error configuring node: %s", err)
 		os.Exit(1)
 	}
-	if err := srv.Serve(); err != nil {
+
+	// Handler for Ctrl+C and then shutdown the server.
+	ctx, can := context.WithCancel(context.Background())
+	defer can()
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	go func() error {
+		<-signalChan
+		can()
+		return nil
+	}()
+
+	if err := srv.Serve(ctx); err != nil {
 		os.Exit(-1)
 	}
 }

@@ -23,21 +23,17 @@ type Args struct {
 	NodeName             string
 }
 
-var pwd string
+var tmpDir string
 
 func init() {
-	var err error
-	pwd, err = os.Getwd()
-	if err != nil {
-		panic(err)
-	}
+	tmpDir = os.TempDir()
 }
 
 var (
 	defaultNodeName = "default"
 
-	defaultSerfDataPath = filepath.Join(pwd, "serf-default")
-	defaultRaftDataPath = filepath.Join(pwd, "raft-default")
+	defaultSerfDataPath = filepath.Join(tmpDir, "serf-default")
+	defaultRaftDataPath = filepath.Join(tmpDir, "raft-default")
 
 	defaultBindAddress          = "127.0.0.1"
 	defaultSerfPort             = 6000

@@ -1,13 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
 
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/server/state-machines/datastore"
-	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 )
 
@@ -22,7 +22,9 @@ func TestSQLServer(t *testing.T) {
 	}
 	defer logger.Sync()
 
-	ecfg, err := config.LoadConfig(config.DefaultArgs())
+	args := config.DefaultArgs()
+	args.IsSeed = true
+	ecfg, err := config.LoadConfig(args)
 	if err != nil {
 		t.Logf("Configuration errors - %s\n", err)
 		t.FailNow()
@@ -31,16 +33,16 @@ func TestSQLServer(t *testing.T) {
 
 	logger = logger.Named(ecfg.ID())
 
-	serf.DefaultConfig()
-
 	srv, err := New(ecfg, logger)
 	if err != nil {
 		t.Logf("Error configuring node: %s", err)
 		t.FailNow()
 	}
-	if err := srv.Serve(); err != nil {
-		t.FailNow()
-	}
+	go func() {
+		if err := srv.Serve(context.TODO()); err != nil {
+			t.FailNow()
+		}
+	}()
 
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// server.handleKeyUpdate(w, r)
