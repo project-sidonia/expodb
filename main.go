@@ -20,16 +20,18 @@ func main() {
 	}
 	defer logger.Sync()
 
-	config, err := config.LoadConfig()
+	args := config.ParseArgs()
+
+	ecfg, err := config.LoadConfig(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration errors - %s\n", err)
 		os.Exit(1)
 	}
-	logger = logger.Named(config.ID())
+	logger = logger.Named(ecfg.ID())
 
 	serf.DefaultConfig()
 
-	srv, err := server.New(config, logger)
+	srv, err := server.New(ecfg, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error configuring node: %s", err)
 		os.Exit(1)

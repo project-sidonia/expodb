@@ -108,7 +108,7 @@ func (n *server) SetKeyVal(table, key, col, val string) error {
 		if !ok {
 			return fmt.Errorf("Raft leader address not found")
 		}
-		url := fmt.Sprintf("http://%s/key/_update", leader.HttpAddr(), key)
+		url := fmt.Sprintf("http://%s/key/_update", leader.HttpAddr())
 		request := struct {
 			Table  string `json:"table"`
 			RowKey string `json:"key"`

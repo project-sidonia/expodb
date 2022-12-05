@@ -59,27 +59,38 @@ func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
 	raftNotifych := make(chan bool, 1)
 	raftConfig.NotifyCh = raftNotifych
 
-	snapshotStoreLogger := logger.Named("raft.snapshots")
-	const retain = 1
-	snapshotStore, err := raft.NewFileSnapshotStore(
-		config.RaftDataDir,
-		retain,
-		loggingutils.NewLogWriter(snapshotStoreLogger),
-	)
-	if err != nil {
-		return nil, err
-	}
-	logStore, err := raftboltdb.NewBoltStore(
-		filepath.Join(config.RaftDataDir, "raft-log.bolt"),
-	)
-	if err != nil {
-		return nil, err
-	}
-	stableStore, err := raftboltdb.NewBoltStore(
-		filepath.Join(config.RaftDataDir, "raft-stable.bolt"),
-	)
-	if err != nil {
-		return nil, err
+	var logsStore raft.LogStore
+	var stableStore raft.StableStore
+	var snapsStore raft.SnapshotStore
+
+	if !config.UseInMemory {
+		snapshotStoreLogger := logger.Named("raft.snapshots")
+		const retain = 1
+		logsStore, err = raftboltdb.NewBoltStore(
+			filepath.Join(config.RaftDataDir, "raft-log.bolt"),
+		)
+		if err != nil {
+			return nil, err
+		}
+		stableStore, err = raftboltdb.NewBoltStore(
+			filepath.Join(config.RaftDataDir, "raft-stable.bolt"),
+		)
+		if err != nil {
+			return nil, err
+		}
+		snapsStore, err = raft.NewFileSnapshotStore(
+			config.RaftDataDir,
+			retain,
+			loggingutils.NewLogWriter(snapshotStoreLogger),
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		memStore := raft.NewInmemStore()
+		logsStore = memStore
+		stableStore = memStore
+		snapsStore = raft.NewDiscardSnapshotStore()
 	}
 
 	logger.Info("NewNode created raft node", zap.String("raft-config", fmt.Sprintf("%+v", raftConfig)))
@@ -87,9 +98,9 @@ func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
 	raftNode, err := raft.NewRaft(
 		raftConfig,
 		fsm,
-		logStore,
+		logsStore,
 		stableStore,
-		snapshotStore,
+		snapsStore,
 		transport,
 	)
 	if err != nil {
@@ -97,7 +108,7 @@ func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
 	}
 
 	if config.Bootstrap {
-		hasState, err := raft.HasExistingState(logStore, stableStore, snapshotStore)
+		hasState, err := raft.HasExistingState(logsStore, stableStore, snapsStore)
 		if err != nil {
 			return nil, err
 		}

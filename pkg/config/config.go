@@ -4,30 +4,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
-	"strings"
 
 	multierror "github.com/hashicorp/go-multierror"
 	template "github.com/hashicorp/go-sockaddr/template"
-	flag "github.com/ogier/pflag"
 )
-
-type args struct {
-	BindAddress          string
-	JoinAddress          string
-	RaftPort             int
-	SerfPort             int
-	SerfAdvertiseAddress string
-	SerfAdvertisePort    int
-	SerfJoinAddrs        []string
-	HTTPPort             int
-	SerfDataDir          string
-	RaftDataDir          string
-	Bootstrap            bool
-	IsSeed               bool
-	NodeName             string
-}
 
 type Config struct {
 	SerfBindAddress   string
@@ -41,14 +22,14 @@ type Config struct {
 	HTTPBindAddress string
 	HTTPBindPort    int
 
-	JoinAddress string // Deprecated ??
-
 	RaftBindAddress string
 	RaftBindPort    int
 	RaftDataDir     string
 	Bootstrap       bool
 
 	NodeName string
+
+	UseInMemory bool // use in memory store for testing
 }
 
 func (c *Config) ID() string {
@@ -64,10 +45,8 @@ func (err *ConfigError) Error() string {
 	return fmt.Sprintf("%s: %s", err.ConfigurationPoint, err.Err.Error())
 }
 
-func LoadConfig() (*Config, error) {
+func LoadConfig(args *Args) (*Config, error) {
 	var errors *multierror.Error
-
-	var args = getArgs()
 
 	// Bind address
 	var bindAddr net.IP
@@ -193,7 +172,6 @@ func LoadConfig() (*Config, error) {
 	return &Config{
 		NodeName:          args.NodeName,
 		RaftDataDir:       raftDataDir,
-		JoinAddress:       args.JoinAddress, //TODO - validate this looks address-like
 		IsSerfSeed:        args.IsSeed,
 		SerfDataDir:       serfDataDir,
 		SerfBindAddress:   bindAddr.String(),
@@ -203,62 +181,9 @@ func LoadConfig() (*Config, error) {
 		SerfJoinAddrs:     args.SerfJoinAddrs,
 		RaftBindAddress:   bindAddr.String(),
 		RaftBindPort:      args.RaftPort,
-		HTTPBindAddress:   bindAddr.String(),
-		HTTPBindPort:      args.HTTPPort,
-		Bootstrap:         args.Bootstrap,
+
+		HTTPBindAddress: bindAddr.String(),
+		HTTPBindPort:    args.HTTPPort,
+		Bootstrap:       args.Bootstrap,
 	}, nil
-}
-
-func getArgs() *args {
-	var parsedArgs args
-
-	pwd, err := os.Getwd()
-	if err != nil {
-		pwd = "."
-	}
-
-	defaultSerfDataPath := filepath.Join(pwd, "serf-default")
-	flag.StringVarP(&parsedArgs.SerfDataDir, "serf-data-dir", "s",
-		defaultSerfDataPath, "Path in which to store Serf data")
-
-	defaultRaftDataPath := filepath.Join(pwd, "raft-default")
-	flag.StringVarP(&parsedArgs.RaftDataDir, "raft-data-dir", "d",
-		defaultRaftDataPath, "Path in which to store Raft data")
-
-	flag.StringVarP(&parsedArgs.BindAddress, "bind-address", "a",
-		"127.0.0.1", "IP Address on which to bind")
-	flag.IntVarP(&parsedArgs.SerfPort, "serf-port", "S",
-		6000, "Port on which to bind serf")
-	flag.StringVarP(&parsedArgs.SerfAdvertiseAddress, "advertise-address", "A",
-		"", "IP Address on which to advertise to other members of the ")
-	flag.IntVarP(&parsedArgs.SerfAdvertisePort, "serf-advertise-port", "T",
-		0, "Port on which to advertise serf on")
-	var serfJoinAddrsStr string
-	flag.StringVarP(&serfJoinAddrsStr, "serf-join", "Z",
-		"", "Comma seperated list of addresses to serf brokers to join at start time.  Required to be one or more.")
-
-	flag.IntVarP(&parsedArgs.RaftPort, "raft-port", "R",
-		7000, "Port on which to bind Raft")
-
-	flag.IntVarP(&parsedArgs.HTTPPort, "http-port", "H",
-		8000, "Port on which to bind HTTP")
-
-	flag.StringVar(&parsedArgs.JoinAddress, "join",
-		"", "Address of another node to join")
-
-	flag.StringVarP(&parsedArgs.NodeName, "node-name", "N",
-		"",
-		"the name to use for this node when gossiping.  most be uniq.  Defaults to base64(raft.Address)")
-
-	flag.BoolVar(&parsedArgs.Bootstrap, "bootstrap",
-		false, "Bootstrap the cluster with this node")
-
-	flag.BoolVar(&parsedArgs.IsSeed, "is-seed",
-		false, "configure as the first node in the cluster, no serf join addresses required.")
-
-	flag.Parse()
-
-	parsedArgs.SerfJoinAddrs = strings.Split(serfJoinAddrsStr, ",")
-
-	return &parsedArgs
 }
