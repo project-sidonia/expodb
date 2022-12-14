@@ -146,11 +146,12 @@ func (a *Agent) SerfConfig() *serf.Config {
 func (a *Agent) Join(addrs []string, replay bool) (n int, err error) {
 	ignoreOld := !replay
 	n, err = a.serf.Join(addrs, ignoreOld)
-	if n > 0 {
-		a.logger.Info("joining cluster", zap.Int("node-count", n), zap.Strings("joining", addrs), zap.Bool("replay", replay))
-	}
 	if err != nil {
 		a.logger.Error("error joining", zap.Error(err))
+		return 0, err
+	}
+	if n > 0 {
+		a.logger.Info("joining cluster", zap.Int("node-count", n), zap.Strings("joining", addrs), zap.Bool("replay", replay))
 	}
 	return
 }
