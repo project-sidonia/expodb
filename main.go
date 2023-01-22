@@ -6,7 +6,6 @@ import (
 
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/server"
-	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 )
 
@@ -26,8 +25,6 @@ func main() {
 		os.Exit(1)
 	}
 	logger = logger.Named(config.ID())
-
-	serf.DefaultConfig()
 
 	srv, err := server.New(config, logger)
 	if err != nil {
