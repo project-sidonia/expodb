@@ -1,27 +1,22 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 
+	raftagent "github.com/epsniff/expodb/pkg/agents/raft"
+	serfagent "github.com/epsniff/expodb/pkg/agents/serf"
 	"github.com/epsniff/expodb/pkg/config"
-	raftagent "github.com/epsniff/expodb/pkg/server/agents/raft"
-	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
-	"github.com/epsniff/expodb/pkg/server/state-machines/datastore"
+	"github.com/epsniff/expodb/pkg/server/interfaces"
+	httpserver "github.com/epsniff/expodb/pkg/server/transport"
+	"github.com/epsniff/expodb/pkg/state-machines/kvstore"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
-
-type KvpStoreReader interface {
-	Get(table, rowkey string) (map[string]string, error)
-}
 
 type server struct {
 	config *config.Config
@@ -32,7 +27,7 @@ type server struct {
 	serfAgent *serfagent.Agent
 
 	raftAgent    *raftagent.Agent
-	raftKvpStore KvpStoreReader
+	raftKvpStore interfaces.KeyValueStore
 }
 
 func New(config *config.Config, logger *zap.Logger) (*server, error) {
@@ -56,8 +51,8 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 		logger.Error("Failed to create raft agent", zap.Error(err))
 		return nil, err
 	}
-	raftKvpStore := datastore.New(logger.Named("raft-fsm-kvp"))
-	if err = raftAgent.AddStateMachine(datastore.KVFSMKey, raftKvpStore); err != nil {
+	raftKvpStore := kvstore.New(logger.Named("raft-fsm-kvp"))
+	if err = raftAgent.AddStateMachine(kvstore.KVFSMKey, raftKvpStore); err != nil {
 		logger.Error("", zap.Error(err))
 		return nil, err
 	}
@@ -78,61 +73,6 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	serfAgent.RegisterEventHandler(ser)
 
 	return ser, nil
-}
-
-// GetByRowKey gets a value from the raft key value fsm
-func (n *server) GetByRowKey(table, key string) (map[string]string, error) {
-	val, err := n.raftKvpStore.Get(table, key)
-	return val, err
-}
-
-// GetByRowByQuery gets values from the raft key value fsm using a SQL query
-func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, error) {
-	panic("not implemented")
-	// vals, err := n.raftKvpStore.GetByQuery(table, query)
-	// return vals, err
-}
-
-// SetKeyVal sets a value in the raft key value fsm, if we aren't the
-// current leader then forward the request onto the leader node.
-func (n *server) SetKeyVal(table, key, col, val string) error {
-	if !n.raftAgent.IsLeader() {
-		// Find the leader by asking raft for the leader's address.  Then use the
-		// metadata we've collected from Serf (gossip) to find the leader's http
-		// address.
-		rAdd := n.raftAgent.LeaderAddress()
-		if rAdd == "" {
-			return fmt.Errorf("Raft leader not started")
-		}
-		leader, ok := n.metadata.FindByRaftAddr(rAdd)
-		if !ok {
-			return fmt.Errorf("Raft leader address not found")
-		}
-		url := fmt.Sprintf("http://%s/key/_update", leader.HttpAddr(), key)
-		request := struct {
-			Table  string `json:"table"`
-			RowKey string `json:"key"`
-			Column string `json:"column"`
-			Value  string `json:"value"`
-		}{table, key, col, val}
-
-		jsonStr, err := json.Marshal(request)
-		if err != nil {
-			n.logger.Error("Failed to marsal json", zap.Error(err))
-			return err
-		}
-		res, err := http.DefaultClient.Post(url, "application/json", bytes.NewBuffer(jsonStr))
-		if err != nil {
-			n.logger.Error("Failed to forward to leader", zap.Error(err), zap.String("url", url))
-			return err
-		}
-		res.Body.Close() // TODO read all
-		return nil
-	}
-	// if Not Leader make http request to leader to ask them to do the Set Command.
-
-	kve := datastore.NewKeyValEvent(datastore.UpdateRowOp, table, col, key, val)
-	return n.raftAgent.Apply(datastore.KVFSMKey, kve)
 }
 
 // HandleEvent is our tap into serf events.  As the Serf(aka gossip) agent detects changes to the cluster
@@ -198,13 +138,9 @@ func (n *server) Serve() error {
 			IP:   net.ParseIP(n.config.HTTPBindAddress),
 			Port: n.config.HTTPBindPort,
 		}
-		httpServer := &httpServer{
-			node:    n,
-			address: httpAddr,
-			logger:  n.logger.Named("http"),
-		}
-		go httpServer.Start() // there isn't a wait to use a context to cancel an http server?? so just spin it off in a go routine for now.
-		return nil
+		TODO_KVStoreImpl := usecases.NewKeyValueStore(n.raftKvpStore, n.logger.Named("usecases-kvp"))
+		httpServer := &httpserver.New(httpAddr, TODO_KVStoreImpl, n.logger)
+		return httpServer.Start(context.TODO())
 	})
 
 	// Run serf agent

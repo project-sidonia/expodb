@@ -1,26 +1,26 @@
-package datastore
+package kvstore
 
 import (
 	"encoding/json"
 	"fmt"
 
-	machines "github.com/epsniff/expodb/pkg/server/state-machines"
+	machines "github.com/epsniff/expodb/pkg/state-machines"
 )
 
 const UpdateRowOp = "update_row"
 
 type KeyValEvent struct {
 	RequestType string
-	Table       string
+	namespace   string
 	Column      string
 	RowKey      string
 	Value       string
 }
 
-func NewKeyValEvent(requestType, table, col, rowKey, value string) KeyValEvent {
+func NewKeyValEvent(requestType, namespace, col, rowKey, value string) KeyValEvent {
 	return KeyValEvent{
 		RequestType: requestType,
-		Table:       table,
+		namespace:   namespace,
 		Column:      col,
 		RowKey:      rowKey,
 		Value:       value,
@@ -39,7 +39,7 @@ func (k KeyValEvent) Marshal() ([]byte, error) {
 func UnmarshalKeyValEvent(buf []byte) (KeyValEvent, error) {
 	var e KeyValEvent
 	if err := json.Unmarshal(buf, &e); err != nil {
-		fmt.Errorf("Failed unmarshaling KeyValEvent. error:%v", err)
+		fmt.Errorf("Failed unmarshalling KeyValEvent. error:%v", err)
 	}
 	return e, nil
 }

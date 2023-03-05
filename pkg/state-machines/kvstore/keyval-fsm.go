@@ -1,11 +1,11 @@
-package datastore
+package kvstore
 
 import (
 	"encoding/json"
 	"fmt"
 	"sync"
 
-	machines "github.com/epsniff/expodb/pkg/server/state-machines"
+	machines "github.com/epsniff/expodb/pkg/state-machines"
 	"go.uber.org/zap"
 )
 
@@ -22,36 +22,36 @@ func Register(reg machines.FSMProvider, kvfsm *KeyValStateMachine) error {
 func New(logger *zap.Logger) *KeyValStateMachine {
 	return &KeyValStateMachine{
 		logger:     logger,
-		stateValue: map[string]map[string]map[string]string{},
+		stateValue: map[string]map[string]string{},
 	}
 }
 
 type KeyValStateMachine struct {
 	mutex      sync.RWMutex
 	logger     *zap.Logger
-	stateValue map[string]map[string]map[string]string
+	stateValue map[string]map[string]string
 }
 
 // Apply raft log update
-func (kv *KeyValStateMachine) Get(table, rowkey string) (map[string]string, error) {
+func (kv *KeyValStateMachine) Get(namespace, rowkey string) (string, error) {
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
 
-	if table == "" {
-		return nil, fmt.Errorf("KeyValStateMachine: no table provided ")
+	if namespace == "" {
+		return "", fmt.Errorf("KeyValStateMachine: no namespace provided ")
 	}
 
 	if rowkey == "" {
-		return nil, fmt.Errorf("KeyValStateMachine: no rowkey provided ")
+		return "", fmt.Errorf("KeyValStateMachine: no rowkey provided ")
 	}
 
-	tab, ok := kv.stateValue[table]
+	ns, ok := kv.stateValue[namespace]
 	if !ok {
-		return nil, ErrKeyNotFound
+		return "", ErrKeyNotFound
 	}
-	row, ok := tab[rowkey]
+	row, ok := ns[rowkey]
 	if !ok {
-		return nil, ErrKeyNotFound
+		return "", ErrKeyNotFound
 	}
 	return row, nil
 }
@@ -68,21 +68,14 @@ func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
 		kv.mutex.Lock()
 		defer kv.mutex.Unlock()
 
-		tab, ok := kv.stateValue[e.Table]
+		ns, ok := kv.stateValue[e.namespace]
 		if !ok {
-			tab = map[string]map[string]string{}
-			kv.stateValue[e.Table] = tab
+			ns = map[string]string{}
+			kv.stateValue[e.namespace] = ns
 		}
-		row, ok := tab[e.RowKey]
-		if !ok {
-			row = map[string]string{}
-			tab[e.RowKey] = row
-		}
-		row[e.Column] = e.Value
+		ns[e.RowKey] = e.Value
 		kv.logger.Debug("RequestType:KVP: update row",
-			zap.String("table", e.Table),
-			zap.String("rowkey", e.RowKey),
-			zap.String("column", e.Column),
+			zap.String("namespace", e.namespace),
 			zap.String("val", e.Value))
 		return nil, nil
 	default:

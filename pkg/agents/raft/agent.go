@@ -8,7 +8,7 @@ import (
 
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/loggingutils"
-	machines "github.com/epsniff/expodb/pkg/server/state-machines"
+	machines "github.com/epsniff/expodb/pkg/state-machines"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"go.uber.org/zap"
