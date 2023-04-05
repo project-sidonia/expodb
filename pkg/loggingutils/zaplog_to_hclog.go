@@ -106,6 +106,11 @@ func (l hclog2ZapLogger) ImpliedArgs() []interface{} {
 func (l hclog2ZapLogger) SetLevel(level hclog.Level) {
 }
 
+// GetLevel implementation.
+func (l hclog2ZapLogger) GetLevel() hclog.Level {
+	return hclog.NoLevel
+}
+
 // StandardLogger implementation.
 func (l hclog2ZapLogger) StandardLogger(opts *hclog.StandardLoggerOptions) *log.Logger {
 	return zap.NewStdLog(l.zap)
