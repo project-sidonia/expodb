@@ -37,6 +37,7 @@ func (k KeyValEvent) Marshal() ([]byte, error) {
 }
 
 func UnmarshalKeyValEvent(buf []byte) (KeyValEvent, error) {
+	buf, _ = machines.DecodeRaftType(buf)
 	var e KeyValEvent
 	if err := json.Unmarshal(buf, &e); err != nil {
 		return e, fmt.Errorf("failed unmarshaling KeyValEvent: %w", err)
