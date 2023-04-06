@@ -142,3 +142,6 @@ type BatchingFSM interface {
 	FSM
 }
 */
+func (fsm *fsm) ApplyBatch(logEntries []*raft.Log) []interface{} {
+	return fsm.fsmProvider.ApplyBatch(logEntries)
+}
