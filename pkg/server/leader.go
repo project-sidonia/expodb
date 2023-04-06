@@ -26,6 +26,7 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 					continue
 				}
 				lCtx, lCan = context.WithCancel(ctx)
+				defer lCan()
 				leaderLoop.Add(1)
 				go func(ctx context.Context) {
 					defer leaderLoop.Done()
@@ -45,9 +46,6 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 				n.logger.Info("cluster leadership lost", zap.String("id", n.config.ID()))
 			}
 		case <-ctx.Done():
-			if lCtx != nil {
-				lCan()
-			}
 			return nil
 		}
 	}
@@ -56,13 +54,8 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 // leaderLoop is the code you want the leader to run.  For example, if you need a job
 // started ever N mins, this would be a good place to put it.
 func (n *server) leaderLoop(ctx context.Context) error {
-	for {
-		select {
-		case <-ctx.Done():
-			n.logger.Info("leader loop exiting")
-			return nil
-		}
-		// We are the leader, do leader stuff here.
-	}
+	// We are the leader, do leader stuff here.
+	<-ctx.Done()
+	n.logger.Info("leader loop exiting")
 	return nil
 }
