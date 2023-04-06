@@ -1,4 +1,4 @@
-package memstore
+package simplestore
 
 import (
 	"encoding/json"
