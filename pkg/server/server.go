@@ -13,7 +13,7 @@ import (
 	"github.com/epsniff/expodb/pkg/config"
 	raftagent "github.com/epsniff/expodb/pkg/server/agents/raft"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
-	"github.com/epsniff/expodb/pkg/server/state-machines/datastore"
+	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -36,30 +36,24 @@ type server struct {
 }
 
 func New(config *config.Config, logger *zap.Logger) (*server, error) {
-
 	if err := os.MkdirAll(config.SerfDataDir, 0700); err != nil {
-		logger.Error("Failed to make serf data dir", zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("failed to make serf data dir: %w", err)
 	}
 	serfAgent, err := serfagent.New(config, logger.Named("serf-agent"))
 	if err != nil {
-		logger.Error("failed to create serf agent", zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("failed to create serf agent: %w", err)
 	}
 
 	if err := os.MkdirAll(config.RaftDataDir, 0700); err != nil {
-		logger.Error("Failed to make raft data dir", zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("failed to make raft data dir: %w", err)
 	}
 	raftAgent, err := raftagent.New(config, logger.Named("raft-agent"))
 	if err != nil {
-		logger.Error("Failed to create raft agent", zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("failed to create raft agent: %w", err)
 	}
-	raftKvpStore := datastore.New(logger.Named("raft-fsm-kvp"))
-	if err = raftAgent.AddStateMachine(datastore.KVFSMKey, raftKvpStore); err != nil {
-		logger.Error("", zap.Error(err))
-		return nil, err
+	raftKvpStore := simplestore.New(logger.Named("raft-fsm-kvp"))
+	if err = raftAgent.AddStateMachine(simplestore.KVFSMKey, raftKvpStore); err != nil {
+		return nil, fmt.Errorf("failed to add raft fsm: %w", err)
 	}
 
 	ser := &server{
@@ -102,13 +96,13 @@ func (n *server) SetKeyVal(table, key, col, val string) error {
 		// address.
 		rAdd := n.raftAgent.LeaderAddress()
 		if rAdd == "" {
-			return fmt.Errorf("Raft leader not started")
+			return fmt.Errorf("raft leader not started")
 		}
 		leader, ok := n.metadata.FindByRaftAddr(rAdd)
 		if !ok {
-			return fmt.Errorf("Raft leader address not found")
+			return fmt.Errorf("raft leader address not found")
 		}
-		url := fmt.Sprintf("http://%s/key/_update", leader.HttpAddr(), key)
+		url := fmt.Sprintf("http://%s/key/_update", leader.HttpAddr())
 		request := struct {
 			Table  string `json:"table"`
 			RowKey string `json:"key"`
@@ -131,8 +125,8 @@ func (n *server) SetKeyVal(table, key, col, val string) error {
 	}
 	// if Not Leader make http request to leader to ask them to do the Set Command.
 
-	kve := datastore.NewKeyValEvent(datastore.UpdateRowOp, table, col, key, val)
-	return n.raftAgent.Apply(datastore.KVFSMKey, kve)
+	kve := simplestore.NewKeyValEvent(simplestore.UpdateRowOp, table, col, key, val)
+	return n.raftAgent.Apply(simplestore.KVFSMKey, kve)
 }
 
 // HandleEvent is our tap into serf events.  As the Serf(aka gossip) agent detects changes to the cluster

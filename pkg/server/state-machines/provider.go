@@ -28,7 +28,7 @@ type FSMProvider map[uint16]StateMachine
 // because this func doesn't lock the backing map.
 func (fsmr FSMProvider) Add(key uint16, sm StateMachine) error {
 	if _, ok := fsmr[key]; ok {
-		return fmt.Errorf("Mutiple FSM Registry entires for %v", key)
+		return fmt.Errorf("mutiple FSM Registry entires for %v", key)
 	}
 
 	fsmr[key] = sm
@@ -48,7 +48,7 @@ func (fsmr FSMProvider) Apply(logEntry *raft.Log) (interface{}, error) {
 
 	handler, ok := fsmr[key]
 	if !ok {
-		return nil, fmt.Errorf("No handler found for key: %d", key)
+		return nil, fmt.Errorf("no handler found for key: %d", key)
 	}
 	return handler.Apply(data)
 }
@@ -60,7 +60,7 @@ func (fsmr FSMProvider) SnapshotAll() (map[uint16][]byte, error) {
 	for k, fsm := range fsmr {
 		data, err := fsm.Persist()
 		if err != nil {
-			return nil, fmt.Errorf("Error from fsm.Persist %d (type:%T): error:%v", k, fsm, err)
+			return nil, fmt.Errorf("error from fsm.Persist %d (type:%T): error:%v", k, fsm, err)
 		}
 		s[k] = data
 	}
@@ -77,7 +77,7 @@ func (fsmr FSMProvider) RestoreAll(vals map[uint16][]byte) error {
 		}
 		err := fsm.Restore(data)
 		if err != nil {
-			return fmt.Errorf("Error from fsm.Restore %d (type:%T): error:%v", k, fsm, err)
+			return fmt.Errorf("error from fsm.Restore %d (type:%T): error:%v", k, fsm, err)
 		}
 	}
 	return nil

@@ -1,23 +1,18 @@
-package datastore
+package simplestore
 
 import (
 	"encoding/json"
 	"fmt"
 	"sync"
 
-	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 	"go.uber.org/zap"
 )
 
 const KVFSMKey = uint16(10)
 
 var (
-	ErrKeyNotFound = fmt.Errorf("Key Not Found")
+	ErrKeyNotFound = fmt.Errorf("key not found")
 )
-
-func Register(reg machines.FSMProvider, kvfsm *KeyValStateMachine) error {
-	return reg.Add(KVFSMKey, kvfsm)
-}
 
 func New(logger *zap.Logger) *KeyValStateMachine {
 	return &KeyValStateMachine{
@@ -27,8 +22,9 @@ func New(logger *zap.Logger) *KeyValStateMachine {
 }
 
 type KeyValStateMachine struct {
-	mutex      sync.RWMutex
-	logger     *zap.Logger
+	mutex  sync.RWMutex
+	logger *zap.Logger
+	// table -> rowkey -> column -> value
 	stateValue map[string]map[string]map[string]string
 }
 
@@ -38,11 +34,11 @@ func (kv *KeyValStateMachine) Get(table, rowkey string) (map[string]string, erro
 	defer kv.mutex.RUnlock()
 
 	if table == "" {
-		return nil, fmt.Errorf("KeyValStateMachine: no table provided ")
+		return nil, fmt.Errorf("KeyValStateMachine: no table provided")
 	}
 
 	if rowkey == "" {
-		return nil, fmt.Errorf("KeyValStateMachine: no rowkey provided ")
+		return nil, fmt.Errorf("KeyValStateMachine: no rowkey provided")
 	}
 
 	tab, ok := kv.stateValue[table]
@@ -92,9 +88,9 @@ func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
 
 // Restore from a snapshot
 func (kv *KeyValStateMachine) Restore(data []byte) error {
-	err := json.Unmarshal(data, kv.stateValue) // TODO protobuf or Avro ?
+	err := json.Unmarshal(data, &kv.stateValue) // TODO protobuf or Avro ?
 	if err != nil {
-		return fmt.Errorf("KeyValStateMachine restore error: %v", err)
+		return fmt.Errorf("restore error on KeyValStateMachine: %w", err)
 	}
 	return nil
 }

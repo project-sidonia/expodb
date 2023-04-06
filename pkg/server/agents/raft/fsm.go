@@ -59,7 +59,7 @@ func (fsm *fsm) Snapshot() (raft.FSMSnapshot, error) {
 		fsm.logger.Error("Failed to get snapshots from finite state machines: err:%v", zap.Error(err))
 		return nil, err
 	}
-	return &fsmSnapshot{state: state}, nil
+	return &fsmSnapshot{State: state}, nil
 }
 
 // Restore implements the raft.FSM.Restore interface and restores the snapshot bytes from the
@@ -72,7 +72,7 @@ func (fsm *fsm) Restore(serialized io.ReadCloser) error {
 	if err := json.NewDecoder(serialized).Decode(&snapshot); err != nil {
 		return err
 	}
-	err := fsm.fsmProvider.RestoreAll(snapshot.state)
+	err := fsm.fsmProvider.RestoreAll(snapshot.State)
 	if err != nil {
 		fsm.logger.Error("Failed to get restore snapshots for finite state machines: err:%v", zap.Error(err))
 		return err
@@ -84,7 +84,7 @@ func (fsm *fsm) Restore(serialized io.ReadCloser) error {
 // response to a Snapshot.  It must be safe to invoke FSMSnapshot methods with concurrent
 // calls to Apply.
 type fsmSnapshot struct {
-	state map[uint16][]byte `json:"snapshot_state"`
+	State map[uint16][]byte `json:"snapshot_state"`
 }
 
 // Persist should dump all necessary state to the WriteCloser 'sink',

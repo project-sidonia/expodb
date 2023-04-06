@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/epsniff/expodb/pkg/server/state-machines/datastore"
+	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
 	"github.com/justinas/alice"
 	"go.uber.org/zap"
 )
@@ -97,7 +97,7 @@ func (server *httpServer) handleKeyFetch(w http.ResponseWriter, r *http.Request)
 	}
 
 	val, err := server.node.GetByRowKey(req.Table, req.Key)
-	if err == datastore.ErrKeyNotFound {
+	if err == simplestore.ErrKeyNotFound {
 		statusNotFound(w)
 		return
 	} else if err != nil {
@@ -139,7 +139,7 @@ func (server *httpServer) handleKeyQuery(w http.ResponseWriter, r *http.Request)
 	}
 
 	vals, err := server.node.GetByRowByQuery(req.Table, req.Query)
-	if err == datastore.ErrKeyNotFound {
+	if err == simplestore.ErrKeyNotFound {
 		statusNotFound(w)
 		return
 	} else if err != nil {

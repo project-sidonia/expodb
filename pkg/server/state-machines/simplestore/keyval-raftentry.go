@@ -1,4 +1,4 @@
-package datastore
+package memstore
 
 import (
 	"encoding/json"
@@ -39,7 +39,7 @@ func (k KeyValEvent) Marshal() ([]byte, error) {
 func UnmarshalKeyValEvent(buf []byte) (KeyValEvent, error) {
 	var e KeyValEvent
 	if err := json.Unmarshal(buf, &e); err != nil {
-		fmt.Errorf("Failed unmarshaling KeyValEvent. error:%v", err)
+		return e, fmt.Errorf("failed unmarshaling KeyValEvent: %w", err)
 	}
 	return e, nil
 }
