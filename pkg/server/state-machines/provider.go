@@ -1,7 +1,6 @@
 package machines
 
 import (
-	"encoding/binary"
 	"fmt"
 
 	"github.com/hashicorp/raft"
@@ -40,17 +39,34 @@ func (fsmr FSMProvider) Add(key uint16, sm StateMachine) error {
 // Hashicorps raft.  The error is incase we don't have a registered handler or if the
 // handler returns an error.
 func (fsmr FSMProvider) Apply(logEntry *raft.Log) (interface{}, error) {
-	data := logEntry.Data[:len(logEntry.Data)-2] // The last byte should be the typeS
-	// fsm.logger.Debug("DEBUG", zap.ByteString("apply.Buf", buf))
-	keyB := logEntry.Data[len(logEntry.Data)-2:] // read just the last byte for the type
-	// fsm.logger.Debug("DEBUG", zap.ByteString("apply.type", []byte{msgType}))
-	key := binary.BigEndian.Uint16(keyB)
+	data, key := DecodeRaftType(logEntry.Data)
 
 	handler, ok := fsmr[key]
 	if !ok {
 		return nil, fmt.Errorf("no handler found for key: %d", key)
 	}
 	return handler.Apply(data)
+}
+
+func (fsmr FSMProvider) ApplyBatch(logEntries []*raft.Log) []interface{} {
+	resps := make([]interface{}, len(logEntries))
+	for i, logEntry := range logEntries {
+		data, key := DecodeRaftType(logEntry.Data)
+
+		handler, ok := fsmr[key]
+		if !ok {
+			resps[i] = fmt.Errorf("no handler found for key: %d", key)
+			continue
+		}
+
+		resp, err := handler.Apply(data)
+		if err != nil {
+			resps[i] = err
+		} else {
+			resps[i] = resp
+		}
+	}
+	return resps
 }
 
 // SnapshotAll returns a map of all the state machines snapshot data, this is used by the raft.FSM
