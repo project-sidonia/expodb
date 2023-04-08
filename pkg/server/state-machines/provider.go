@@ -11,6 +11,8 @@ type StateMachine interface {
 	// Apply raft log update for this state machine
 	Apply(delta []byte) (interface{}, error)
 
+	Lookup(query interface{}) (interface{}, error)
+
 	// Restore a subsection from snapshot for this state machine
 	Restore(data []byte) error
 
@@ -22,6 +24,14 @@ type StateMachine interface {
 // the correct state machine to apply a raft log to. Which is used by the raft.FSM
 // interfaces to apply a raft log to the correct state machine.
 type FSMProvider map[uint16]StateMachine
+
+func (fsmr FSMProvider) Lookup(key uint16, query interface{}) (interface{}, error) {
+	if _, ok := fsmr[key]; ok {
+		return nil, fmt.Errorf("mutiple FSM Registry entires for %v", key)
+	}
+
+	return fsmr[key].Lookup(query)
+}
 
 // Add a new handler to the registry, this most be done in an init style at startup
 // because this func doesn't lock the backing map.

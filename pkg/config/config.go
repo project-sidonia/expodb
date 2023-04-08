@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -101,8 +100,7 @@ func LoadConfig() (*Config, error) {
 
 	// Node Name
 	if args.NodeName == "" {
-		name := fmt.Sprintf("%s:%d", args.BindAddress, args.RaftPort)
-		args.NodeName = base64.StdEncoding.EncodeToString([]byte(name))
+		errors = multierror.Append(errors, fmt.Errorf("node-name must be set to 1-5"))
 	}
 
 	// Serf bind port

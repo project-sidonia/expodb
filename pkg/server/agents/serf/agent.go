@@ -56,7 +56,6 @@ func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
 	conf, err := createSerfConfig(config, logger, eventCh, snapshotPath)
 	if err != nil {
 		return nil, fmt.Errorf("creating serf config for agent failed: err;%v", err)
-		return nil, err
 	}
 
 	// Setup the agent
@@ -184,7 +183,7 @@ func (a *Agent) Query(name string, payload []byte, params *serf.QueryParam) (*se
 	if strings.HasPrefix(name, serf.InternalQueryPrefix) {
 		// Allow the special "ping" query
 		if name != serf.InternalQueryPrefix+"ping" || payload != nil {
-			return nil, fmt.Errorf("Queries cannot contain the '%s' prefix", serf.InternalQueryPrefix)
+			return nil, fmt.Errorf("queries cannot contain the '%s' prefix", serf.InternalQueryPrefix)
 		}
 	}
 	a.logger.Debug("Requesting query send", zap.String("name", name), zap.ByteString("payload", payload))
@@ -251,7 +250,7 @@ func (a *Agent) Stats() map[string]map[string]string {
 	event_handlers := make(map[string]string)
 
 	output := map[string]map[string]string{
-		"agent": map[string]string{
+		"agent": {
 			"name": local.Name,
 		},
 		"serf":           a.serf.Stats(),

@@ -1,7 +1,6 @@
 package serf
 
 import (
-	"fmt"
 	"strconv"
 	"time"
 
@@ -57,7 +56,7 @@ func createSerfConfig(config *config.Config, logger *zap.Logger, ch chan serf.Ev
 	serfConfig.Tags["role"] = "expodb"
 	//serfConfig.Tags["region"] = s.config.Region
 	//serfConfig.Tags["dc"] = s.config.Datacenter
-	serfConfig.Tags["ver"] = fmt.Sprintf("%s", version.ServerVersion)
+	serfConfig.Tags["ver"] = version.ServerVersion
 	//serfConfig.Tags["build"] = s.config.Build
 	//serfConfig.Tags["raft_vsn"] = fmt.Sprintf("%d", s.config.RaftConfig.ProtocolVersion)
 	serfConfig.Tags["id"] = config.ID()

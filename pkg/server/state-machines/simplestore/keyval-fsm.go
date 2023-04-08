@@ -10,6 +10,13 @@ import (
 
 const KVFSMKey = uint16(10)
 
+// Copied from https://github.com/lni/dragonboat-example/blob/master/optimistic-write-lock/fsm.go
+const (
+	ResultCodeFailure = iota
+	ResultCodeSuccess
+	ResultCodeVersionMismatch
+)
+
 var (
 	ErrKeyNotFound = fmt.Errorf("key not found")
 )
@@ -28,7 +35,19 @@ type KeyValStateMachine struct {
 	stateValue map[string]map[string]map[string]string
 }
 
-// Apply raft log update
+type Query struct {
+	Table  string
+	RowKey string
+}
+
+func (kv *KeyValStateMachine) Lookup(e interface{}) (interface{}, error) {
+	query, ok := e.(Query)
+	if !ok {
+		return nil, fmt.Errorf("invalid query %#v", e)
+	}
+	return kv.Get(query.Table, query.RowKey)
+}
+
 func (kv *KeyValStateMachine) Get(table, rowkey string) (map[string]string, error) {
 	kv.mutex.RLock()
 	defer kv.mutex.RUnlock()
@@ -56,8 +75,7 @@ func (kv *KeyValStateMachine) Get(table, rowkey string) (map[string]string, erro
 func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
 	e, err := UnmarshalKeyValEvent(delta)
 	if err != nil {
-		kv.logger.Error("KeyValStateMachine failed to unmarshal kv event:", zap.Error(err))
-		return nil, err
+		return ResultCodeFailure, fmt.Errorf("failed to unmarshal kv event: %w", err)
 	}
 	switch e.RequestType {
 	case UpdateRowOp:
@@ -80,7 +98,7 @@ func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
 			zap.String("rowkey", e.RowKey),
 			zap.String("column", e.Column),
 			zap.String("val", e.Value))
-		return nil, nil
+		return []byte(e.Value), nil
 	default:
 		panic(fmt.Sprintf("Unrecognized key value event type in Raft log entry: %v. This is a bug.", e.RequestType))
 	}

@@ -43,12 +43,16 @@ args="${args} --raft-data-dir=${data_directory}_raft"
 args="${args} --serf-port=${node_serf_port}"
 args="${args} --raft-port=${node_raft_port}"
 args="${args} --http-port=${node_http_port}"
-args="${args} --node-name=node-${node_number}"
+args="${args} --node-name=${node_number}"
 
 if [ "${node_number}" == 1 ] ; then
     args="${args} --bootstrap true --is-seed=true"
+else if [ "${node_number}" == 2 ] ; then
+    args="${args} --bootstrap true --serf-join=127.0.0.1:6000"
+else if [ "${node_number}" == 3 ] ; then
+    args="${args} --bootstrap true --serf-join=127.0.0.1:6000"
 else
-    args="${args} --serf-join=127.0.0.1:6000"
+    args="${args}  --serf-join=127.0.0.1:6000"
 fi
 
 echo running ./expodb ${args}
