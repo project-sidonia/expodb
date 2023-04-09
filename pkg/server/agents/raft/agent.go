@@ -145,7 +145,7 @@ func (a *Agent) AddVoter(id, peerAddress string) error {
 // Apply is used to apply a command to the FSM in a highly consistent
 // manner.  This call blocks until the log is conserted commited or
 // until 5 seconds is reached.
-func (a *Agent) Apply(key uint16, val machines.RaftEntry) error {
+func (a *Agent) Apply(val machines.RaftEntry) error {
 	data, err := val.Marshal()
 	if err != nil {
 		a.logger.Error("Failed to marshal raft entry", zap.Error(err))

@@ -3,6 +3,7 @@ module github.com/epsniff/expodb
 go 1.20
 
 require (
+	github.com/cockroachdb/pebble v0.0.0-20221207173255-0f086d933dac
 	github.com/hashicorp/go-hclog v1.5.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-sockaddr v1.0.2
@@ -26,7 +27,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/cockroachdb/errors v1.9.0 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20211118104740-dabe8e521a4f // indirect
-	github.com/cockroachdb/pebble v0.0.0-20221207173255-0f086d933dac // indirect
 	github.com/cockroachdb/redact v1.1.3 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/getsentry/sentry-go v0.12.0 // indirect

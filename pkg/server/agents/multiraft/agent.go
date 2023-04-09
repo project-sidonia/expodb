@@ -104,6 +104,9 @@ func New(config *config.Config, _ *zap.Logger) (*Agent, error) {
 	if err := nh.StartReplica(members, len(members) == 0, NewFSM, rc); err != nil {
 		return nil, fmt.Errorf("failed to add cluster, %w", err)
 	}
+	//if err := nh.StartOnDiskReplica(members, len(members) == 0, NewDiskKV, rc); err != nil {
+	//	return nil, fmt.Errorf("failed to add cluster, %w", err)
+	//}
 	a.cs = nh.GetNoOPSession(shardID1)
 	a.nh = nh
 	a.replicaID = replicaID
@@ -137,7 +140,7 @@ func (a *Agent) AddVoter(id, peerAddress string) error {
 // Apply is used to apply a command to the FSM in a highly consistent
 // manner.  This call blocks until the log is conserted commited or
 // until 5 seconds is reached.
-func (a *Agent) Apply(key uint16, val machines.RaftEntry) error {
+func (a *Agent) Apply(val machines.RaftEntry) error {
 	data, err := val.Marshal()
 	if err != nil {
 		return fmt.Errorf("failed to marshal raft entry: %w", err)

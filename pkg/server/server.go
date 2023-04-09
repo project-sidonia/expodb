@@ -31,7 +31,7 @@ type server struct {
 type raftAgent interface {
 	LeaderNotifyCh() <-chan bool
 	AddVoter(id, peerAddress string) error
-	Apply(key uint16, val machines.RaftEntry) error
+	Apply(val machines.RaftEntry) error
 	GetByRowKey(table, key string) (map[string]string, error)
 	IsLeader() bool
 	//LeaderAddress() string
@@ -54,7 +54,8 @@ func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, erro
 // current leader then forward the request onto the leader node.
 func (n *server) SetKeyVal(table, key, col, val string) error {
 	kve := simplestore.NewKeyValEvent(simplestore.UpdateRowOp, table, col, key, val)
-	return n.raftAgent.Apply(simplestore.KVFSMKey, kve)
+	//kve := multiraft.KVData{Key: table + ":" + col + ":" + key, Val: val}
+	return n.raftAgent.Apply(kve)
 }
 
 func New(config *config.Config, logger *zap.Logger) (*server, error) {

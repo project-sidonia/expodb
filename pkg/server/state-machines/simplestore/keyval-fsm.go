@@ -71,7 +71,6 @@ func (kv *KeyValStateMachine) Get(table, rowkey string) (map[string]string, erro
 func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
 	e, err := UnmarshalKeyValEvent(delta)
 	if err != nil {
-		fmt.Println(e, delta)
 		return ResultCodeFailure, fmt.Errorf("failed to unmarshal kv event: %w", err)
 	}
 	switch e.RequestType {
