@@ -101,12 +101,12 @@ func New(config *config.Config, _ *zap.Logger) (*Agent, error) {
 	if config.Bootstrap {
 		members[replicaID] = nodeAddr
 	}
-	if err := nh.StartReplica(members, len(members) == 0, NewFSM, rc); err != nil {
-		return nil, fmt.Errorf("failed to add cluster, %w", err)
-	}
-	//if err := nh.StartOnDiskReplica(members, len(members) == 0, NewDiskKV, rc); err != nil {
+	//if err := nh.StartReplica(members, len(members) == 0, NewFSM, rc); err != nil {
 	//	return nil, fmt.Errorf("failed to add cluster, %w", err)
 	//}
+	if err := nh.StartOnDiskReplica(members, len(members) == 0, NewDiskKV, rc); err != nil {
+		return nil, fmt.Errorf("failed to add cluster, %w", err)
+	}
 	a.cs = nh.GetNoOPSession(shardID1)
 	a.nh = nh
 	a.replicaID = replicaID

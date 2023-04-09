@@ -77,25 +77,57 @@ type pebbledb struct {
 	closed bool
 }
 
-func (r *pebbledb) lookup(query []byte) ([]byte, error) {
+func (r *pebbledb) lookup(query []byte) (map[string]string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.closed {
 		return nil, errors.New("db already closed")
 	}
-	// TODO (ajr) Need to iterate over the individual row
-	val, closer, err := r.db.Get(query)
-	if err != nil {
+	iter := r.db.NewIter(&pebble.IterOptions{LowerBound: query, UpperBound: append(query, 0xff)})
+	resp := map[string]string{}
+	prefix := append(query, ':')
+	fmt.Println("query", string(query), iter.First())
+	for ; iter.Valid(); iter.Next() {
+		if bytes.Contains(iter.Key(), prefix) {
+			key := make([]byte, len(iter.Key())-len(prefix))
+			copy(key, iter.Key()[len(prefix):])
+			val := make([]byte, len(iter.Value()))
+			copy(val, iter.Value())
+			resp[string(key)] = string(val)
+		}
+	}
+	if err := iter.Error(); err != nil {
 		return nil, err
 	}
-	defer closer.Close()
-	if len(val) == 0 {
-		return []byte(""), nil
+	if err := iter.Close(); err != nil {
+		return nil, err
 	}
-	buf := make([]byte, len(val))
-	copy(buf, val)
-	return buf, nil
+	if len(resp) == 0 {
+		return nil, pebble.ErrNotFound
+	}
+
+	return resp, nil
 }
+
+// Example using simple Get
+// func (r *pebbledb) lookup(query []byte) ([]byte, error) {
+// 	r.mu.RLock()
+// 	defer r.mu.RUnlock()
+// 	if r.closed {
+// 		return nil, errors.New("db already closed")
+// 	}
+// 	val, closer, err := r.db.Get(query)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer closer.Close()
+// 	if len(val) == 0 {
+// 		return []byte(""), nil
+// 	}
+// 	buf := make([]byte, len(val))
+// 	copy(buf, val)
+// 	return buf, nil
+// }
 
 func (r *pebbledb) close() {
 	r.mu.Lock()
@@ -351,6 +383,7 @@ func (d *DiskKV) Lookup(e interface{}) (interface{}, error) {
 	key := query.Table + ":" + query.RowKey
 	db := (*pebbledb)(atomic.LoadPointer(&d.db))
 	if db != nil {
+		fmt.Println(key)
 		v, err := db.lookup([]byte(key))
 		if err == nil && d.closed {
 			panic("lookup returned valid result when DiskKV is already closed")
@@ -384,6 +417,7 @@ func (d *DiskKV) Update(ents []sm.Entry) ([]sm.Entry, error) {
 		if err := json.Unmarshal(e.Cmd, dataKV); err != nil {
 			panic(err)
 		}
+		fmt.Println("dataKV", dataKV.Key, dataKV.Val)
 		wb.Set([]byte(dataKV.Key), []byte(dataKV.Val), db.wo)
 		ents[idx].Result = sm.Result{Value: uint64(len(ents[idx].Cmd))}
 	}

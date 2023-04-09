@@ -11,7 +11,6 @@ import (
 	"github.com/epsniff/expodb/pkg/server/agents/multiraft"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
 	machines "github.com/epsniff/expodb/pkg/server/state-machines"
-	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -53,8 +52,8 @@ func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, erro
 // SetKeyVal sets a value in the raft key value fsm, if we aren't the
 // current leader then forward the request onto the leader node.
 func (n *server) SetKeyVal(table, key, col, val string) error {
-	kve := simplestore.NewKeyValEvent(simplestore.UpdateRowOp, table, col, key, val)
-	//kve := multiraft.KVData{Key: table + ":" + col + ":" + key, Val: val}
+	//kve := simplestore.NewKeyValEvent(simplestore.UpdateRowOp, table, col, key, val)
+	kve := multiraft.KVData{Key: table + ":" + key + ":" + col, Val: val}
 	return n.raftAgent.Apply(kve)
 }
 
