@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-
-	"go.uber.org/zap"
 )
 
 const KVFSMKey = uint16(10)
@@ -21,16 +19,14 @@ var (
 	ErrKeyNotFound = fmt.Errorf("key not found")
 )
 
-func New(logger *zap.Logger) *KeyValStateMachine {
+func New() *KeyValStateMachine {
 	return &KeyValStateMachine{
-		logger:     logger,
 		stateValue: map[string]map[string]map[string]string{},
 	}
 }
 
 type KeyValStateMachine struct {
-	mutex  sync.RWMutex
-	logger *zap.Logger
+	mutex sync.RWMutex
 	// table -> rowkey -> column -> value
 	stateValue map[string]map[string]map[string]string
 }
@@ -75,6 +71,7 @@ func (kv *KeyValStateMachine) Get(table, rowkey string) (map[string]string, erro
 func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
 	e, err := UnmarshalKeyValEvent(delta)
 	if err != nil {
+		fmt.Println(e, delta)
 		return ResultCodeFailure, fmt.Errorf("failed to unmarshal kv event: %w", err)
 	}
 	switch e.RequestType {
@@ -93,11 +90,6 @@ func (kv *KeyValStateMachine) Apply(delta []byte) (interface{}, error) {
 			tab[e.RowKey] = row
 		}
 		row[e.Column] = e.Value
-		kv.logger.Debug("RequestType:KVP: update row",
-			zap.String("table", e.Table),
-			zap.String("rowkey", e.RowKey),
-			zap.String("column", e.Column),
-			zap.String("val", e.Value))
 		return []byte(e.Value), nil
 	default:
 		panic(fmt.Sprintf("Unrecognized key value event type in Raft log entry: %v. This is a bug.", e.RequestType))

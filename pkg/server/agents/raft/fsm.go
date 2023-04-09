@@ -2,6 +2,7 @@ package raft
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 
 	machines "github.com/epsniff/expodb/pkg/server/state-machines"
@@ -18,8 +19,7 @@ import (
 // fsm implements the raft.FSM interface and is implemented by clients to make use of the replicated log.
 type fsm struct {
 	logger *zap.Logger
-
-	fsmProvider machines.FSMProvider
+	st     machines.StateMachine
 }
 
 // Apply implements the raft.FSM.Apply interface and applies a Raft log entry
@@ -31,10 +31,9 @@ type fsm struct {
 //
 // The returned value is returned to the client as the ApplyFuture.Response.
 func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
-	res, err := fsm.fsmProvider.Apply(logEntry)
+	res, err := fsm.st.Apply(logEntry.Data)
 	if err != nil {
-		fsm.logger.Error("Failed to apply raft log to finite state machines: err:%v", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to apply raft log to finite state machines: %w", err)
 	}
 	return res
 }
@@ -54,7 +53,7 @@ func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
 // be called concurrently with FSMSnapshot.Persist. This means the FSM should
 // be implemented to allow for concurrent updates while a snapshot is happening.
 func (fsm *fsm) Snapshot() (raft.FSMSnapshot, error) {
-	state, err := fsm.fsmProvider.SnapshotAll()
+	state, err := fsm.st.Persist()
 	if err != nil {
 		fsm.logger.Error("Failed to get snapshots from finite state machines: err:%v", zap.Error(err))
 		return nil, err
@@ -72,7 +71,7 @@ func (fsm *fsm) Restore(serialized io.ReadCloser) error {
 	if err := json.NewDecoder(serialized).Decode(&snapshot); err != nil {
 		return err
 	}
-	err := fsm.fsmProvider.RestoreAll(snapshot.State)
+	err := fsm.st.Restore(snapshot.State)
 	if err != nil {
 		fsm.logger.Error("Failed to get restore snapshots for finite state machines: err:%v", zap.Error(err))
 		return err
@@ -84,7 +83,7 @@ func (fsm *fsm) Restore(serialized io.ReadCloser) error {
 // response to a Snapshot.  It must be safe to invoke FSMSnapshot methods with concurrent
 // calls to Apply.
 type fsmSnapshot struct {
-	State map[uint16][]byte `json:"snapshot_state"`
+	State []byte `json:"snapshot_state"`
 }
 
 // Persist should dump all necessary state to the WriteCloser 'sink',
@@ -142,6 +141,3 @@ type BatchingFSM interface {
 	FSM
 }
 */
-func (fsm *fsm) ApplyBatch(logEntries []*raft.Log) []interface{} {
-	return fsm.fsmProvider.ApplyBatch(logEntries)
-}

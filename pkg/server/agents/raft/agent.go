@@ -9,17 +9,11 @@ import (
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/loggingutils"
 	machines "github.com/epsniff/expodb/pkg/server/state-machines"
+	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"go.uber.org/zap"
 )
-
-// RaftEntry all log entry most support this interface.
-type RaftEntry interface {
-	// By convention the messages self marshal and encode thier fsm type as the last
-	// 2 bytes of the bytes.
-	Marshal() ([]byte, error)
-}
 
 // Agent starts and manages a raft server and the primary FSM.
 type Agent struct {
@@ -32,10 +26,9 @@ type Agent struct {
 
 // New creates a new raft server.
 func New(config *config.Config, logger *zap.Logger) (*Agent, error) {
-	fsmp := machines.FSMProvider{}
 	fsm := &fsm{
-		fsmProvider: fsmp,
-		logger:      logger,
+		st:     simplestore.New(),
+		logger: logger,
 	}
 
 	// Construct Raft Address
@@ -133,6 +126,15 @@ func (a *Agent) LeaderNotifyCh() <-chan bool {
 	return a.raftNotifyCh
 }
 
+func (a *Agent) GetByRowKey(table, rowKey string) (map[string]string, error) {
+	query := simplestore.Query{
+		Table:  table,
+		RowKey: rowKey,
+	}
+	res, err := a.fsm.st.Lookup(query)
+	return res.(map[string]string), err
+}
+
 // AddVoter adds a voting peer to the raft consenses group.
 // Can only be called on the leader.
 func (a *Agent) AddVoter(id, peerAddress string) error {
@@ -143,7 +145,7 @@ func (a *Agent) AddVoter(id, peerAddress string) error {
 // Apply is used to apply a command to the FSM in a highly consistent
 // manner.  This call blocks until the log is conserted commited or
 // until 5 seconds is reached.
-func (a *Agent) Apply(key uint16, val RaftEntry) error {
+func (a *Agent) Apply(key uint16, val machines.RaftEntry) error {
 	data, err := val.Marshal()
 	if err != nil {
 		a.logger.Error("Failed to marshal raft entry", zap.Error(err))
@@ -155,14 +157,6 @@ func (a *Agent) Apply(key uint16, val RaftEntry) error {
 		return err
 	}
 	return nil
-}
-
-// AddStateMachine adds a child state machine that gets a subset of the logs.
-// The key is encoded into the raft messages and each child FSM is required to
-// Marshal that key into the last 2 bytes of it's message types.  This is used
-// for routing messages by the primary FSM.
-func (a *Agent) AddStateMachine(key uint16, sm machines.StateMachine) error {
-	return a.fsm.fsmProvider.Add(key, sm)
 }
 
 // IsLeader returns true if this agent is the leader.

@@ -3,8 +3,6 @@ package simplestore
 import (
 	"encoding/json"
 	"fmt"
-
-	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 )
 
 const UpdateRowOp = "update_row"
@@ -33,11 +31,10 @@ func (k KeyValEvent) Marshal() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return machines.EncodeRaftType(KVFSMKey, res), nil
+	return res, nil
 }
 
 func UnmarshalKeyValEvent(buf []byte) (KeyValEvent, error) {
-	buf, _ = machines.DecodeRaftType(buf)
 	var e KeyValEvent
 	if err := json.Unmarshal(buf, &e); err != nil {
 		return e, fmt.Errorf("failed unmarshaling KeyValEvent: %w", err)

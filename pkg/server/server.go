@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 
 	"github.com/epsniff/expodb/pkg/config"
-	raftagent "github.com/epsniff/expodb/pkg/server/agents/raft"
+	"github.com/epsniff/expodb/pkg/server/agents/multiraft"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
+	machines "github.com/epsniff/expodb/pkg/server/state-machines"
 	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
@@ -23,7 +25,36 @@ type server struct {
 
 	serfAgent *serfagent.Agent
 
-	raftAgent *raftagent.Agent
+	raftAgent raftAgent
+}
+
+type raftAgent interface {
+	LeaderNotifyCh() <-chan bool
+	AddVoter(id, peerAddress string) error
+	Apply(key uint16, val machines.RaftEntry) error
+	GetByRowKey(table, key string) (map[string]string, error)
+	IsLeader() bool
+	//LeaderAddress() string
+	Shutdown() error
+}
+
+// GetByRowKey gets a value from the raft key value fsm
+func (n *server) GetByRowKey(table, key string) (map[string]string, error) {
+	val, err := n.raftAgent.GetByRowKey(table, key)
+	return val, err
+}
+
+func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, error) {
+	panic("not implemented")
+	// vals, err := n.raftKvpStore.GetByQuery(table, query)
+	// return vals, err
+}
+
+// SetKeyVal sets a value in the raft key value fsm, if we aren't the
+// current leader then forward the request onto the leader node.
+func (n *server) SetKeyVal(table, key, col, val string) error {
+	kve := simplestore.NewKeyValEvent(simplestore.UpdateRowOp, table, col, key, val)
+	return n.raftAgent.Apply(simplestore.KVFSMKey, kve)
 }
 
 func New(config *config.Config, logger *zap.Logger) (*server, error) {
@@ -38,13 +69,9 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	if err := os.MkdirAll(config.RaftDataDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to make raft data dir: %w", err)
 	}
-	raftAgent, err := raftagent.New(config, logger.Named("raft-agent"))
+	raftAgent, err := multiraft.New(config, logger.Named("raft-agent"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create raft agent: %w", err)
-	}
-	raftKvpStore := simplestore.New(logger.Named("raft-fsm-kvp"))
-	if err = raftAgent.AddStateMachine(simplestore.KVFSMKey, raftKvpStore); err != nil {
-		return nil, fmt.Errorf("failed to add raft fsm: %w", err)
 	}
 
 	ser := &server{
@@ -80,6 +107,7 @@ func (n *server) HandleEvent(e serf.Event) {
 				)
 			}
 			if !n.raftAgent.IsLeader() {
+				n.logger.Info("Not the raft leader, skipping join")
 				// We aren't the raft leader nothing else to do but to record the nodes metadata.
 				continue
 			}
@@ -118,6 +146,22 @@ func (n *server) Serve() error {
 	// Run monitoring leadership
 	g.Go(func() error {
 		return n.monitorLeadership(ctx)
+	})
+
+	// Run HTTP server
+	g.Go(func() error {
+		// Construct HTTP Address
+		httpAddr := &net.TCPAddr{
+			IP:   net.ParseIP(n.config.HTTPBindAddress),
+			Port: n.config.HTTPBindPort,
+		}
+		httpServer := &httpServer{
+			node:    n,
+			address: httpAddr,
+			logger:  n.logger.Named("http"),
+		}
+		go httpServer.Start() // there isn't a wait to use a context to cancel an http server?? so just spin it off in a go routine for now.
+		return nil
 	})
 
 	// Run serf agent

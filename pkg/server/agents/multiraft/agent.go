@@ -2,15 +2,15 @@ package multiraft
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/epsniff/expodb/pkg/config"
 	machines "github.com/epsniff/expodb/pkg/server/state-machines"
-	"github.com/hashicorp/raft"
+	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
 	"go.uber.org/zap"
 
 	"github.com/lni/dragonboat/v4"
@@ -20,13 +20,6 @@ import (
 	"github.com/lni/dragonboat/v4/raftio"
 )
 
-// RaftEntry all log entry most support this interface.
-type RaftEntry interface {
-	// By convention the messages self marshal and encode thier fsm type as the last
-	// 2 bytes of the bytes.
-	Marshal() ([]byte, error)
-}
-
 // Agent starts and manages a raft server and the primary FSM.
 type Agent struct {
 	ctx       context.Context
@@ -34,9 +27,7 @@ type Agent struct {
 	nh        *dragonboat.NodeHost
 	cs        *client.Session
 
-	raftNode     *raft.Raft
 	raftNotifyCh chan bool
-	fsm          *fsm
 }
 
 const (
@@ -45,23 +36,12 @@ const (
 	shardID1 uint64 = 100
 )
 
-var (
-	// initial nodes count is three, their addresses are also fixed
-	// this is for simplicity
-	addresses = []string{
-		"localhost:63001",
-		"localhost:63002",
-		"localhost:63003",
-	}
-)
-
 func New(config *config.Config, _ *zap.Logger) (*Agent, error) {
 	replicaID, err := strconv.ParseUint(config.ID(), 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse nodeid %s: %w", config.NodeName, err)
 	}
-	name := fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort)
-	nodeAddr := base64.StdEncoding.EncodeToString([]byte(name))
+	nodeAddr := fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort)
 	fmt.Fprintf(os.Stdout, "node address: %s\n", nodeAddr)
 	// change the log verbosity
 	logger.GetLogger("raft").SetLevel(logger.ERROR)
@@ -100,11 +80,10 @@ func New(config *config.Config, _ *zap.Logger) (*Agent, error) {
 		raftNotifyCh: make(chan bool, 1),
 	}
 	nhc := dgConfig.NodeHostConfig{
-		WALDir:         datadir,
-		NodeHostDir:    datadir,
-		RTTMillisecond: 200,
-		RaftAddress:    nodeAddr,
-		// RaftRPCFactory: rpc.NewRaftGRPC,
+		WALDir:            datadir,
+		NodeHostDir:       datadir,
+		RTTMillisecond:    200,
+		RaftAddress:       nodeAddr,
 		RaftEventListener: a,
 	}
 	// create a NodeHost instance. it is a facade interface allowing access to
@@ -118,34 +97,16 @@ func New(config *config.Config, _ *zap.Logger) (*Agent, error) {
 	// behaviour is identical to the one used in the Hello World example.
 	rc.ShardID = shardID1
 
-	var members map[uint64]string
+	members := map[uint64]string{}
 	if config.Bootstrap {
-		initialMembers := make(map[uint64]string)
-		for idx, v := range addresses {
-			if uint64(idx+1) == replicaID {
-				initialMembers[uint64(idx+1)] = nodeAddr
-				continue
-			}
-			// key is the ReplicaID, ReplicaID is not allowed to be 0
-			// value is the raft address
-			initialMembers[uint64(idx+1)] = v
-		}
-		members = initialMembers
-	} else {
-		mem, err := nh.SyncGetShardMembership(a.ctx, shardID1)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get shard membership, %w", err)
-		}
-		members = mem.Nodes
+		members[replicaID] = nodeAddr
 	}
-	if err := nh.StartReplica(members, false, NewFSM, rc); err != nil {
+	if err := nh.StartReplica(members, len(members) == 0, NewFSM, rc); err != nil {
 		return nil, fmt.Errorf("failed to add cluster, %w", err)
 	}
-	cs, err := nh.SyncGetSession(a.ctx, shardID1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get session, %w", err)
-	}
-	a.cs = cs
+	a.cs = nh.GetNoOPSession(shardID1)
+	a.nh = nh
+	a.replicaID = replicaID
 	return a, nil
 }
 
@@ -168,39 +129,47 @@ func (a *Agent) AddVoter(id, peerAddress string) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse id: %w", err)
 	}
-	return a.nh.SyncRequestAddReplica(a.ctx, shardID1, ui64, peerAddress, 0)
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	defer cancel()
+	return a.nh.SyncRequestAddReplica(ctx, shardID1, ui64, peerAddress, 0)
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
 // manner.  This call blocks until the log is conserted commited or
 // until 5 seconds is reached.
-func (a *Agent) Apply(key uint16, val RaftEntry) error {
+func (a *Agent) Apply(key uint16, val machines.RaftEntry) error {
 	data, err := val.Marshal()
 	if err != nil {
 		return fmt.Errorf("failed to marshal raft entry: %w", err)
 	}
-	_, err = a.nh.SyncPropose(a.ctx, a.cs, data)
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	defer cancel()
+	_, err = a.nh.SyncPropose(ctx, a.cs, data)
 	return err
 }
 
-// AddStateMachine adds a child state machine that gets a subset of the logs.
-// The key is encoded into the raft messages and each child FSM is required to
-// Marshal that key into the last 2 bytes of it's message types.  This is used
-// for routing messages by the primary FSM.
-func (a *Agent) AddStateMachine(key uint16, sm machines.StateMachine) error {
-	return a.fsm.fsmProvider.Add(key, sm)
+func (a *Agent) GetByRowKey(table, rowKey string) (map[string]string, error) {
+	query := simplestore.Query{
+		Table:  table,
+		RowKey: rowKey,
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	defer cancel()
+	res, err := a.nh.SyncRead(ctx, shardID1, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read: %w", err)
+	}
+	resp, ok := res.(map[string]string)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert result to map[string]string: %T", res)
+	}
+	return resp, err
 }
 
 // IsLeader returns true if this agent is the leader.
 func (a *Agent) IsLeader() bool {
 	leaderID, _, ok, err := a.nh.GetLeaderID(shardID1)
 	return ok && err == nil && a.replicaID == leaderID
-}
-
-// LeaderAddr returns the address of the leader.
-func (a *Agent) LeaderAddress() string {
-	leaderAddr := a.raftNode.Leader()
-	return string(leaderAddr)
 }
 
 // Shutdown stops the raft server.

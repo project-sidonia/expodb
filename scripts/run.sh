@@ -47,10 +47,6 @@ args="${args} --node-name=${node_number}"
 
 if [ "${node_number}" == 1 ] ; then
     args="${args} --bootstrap true --is-seed=true"
-else if [ "${node_number}" == 2 ] ; then
-    args="${args} --bootstrap true --serf-join=127.0.0.1:6000"
-else if [ "${node_number}" == 3 ] ; then
-    args="${args} --bootstrap true --serf-join=127.0.0.1:6000"
 else
     args="${args}  --serf-join=127.0.0.1:6000"
 fi

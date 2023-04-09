@@ -51,7 +51,6 @@ func TestKeyValStateMachine_Get(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			kv := &KeyValStateMachine{
 				mutex:      sync.RWMutex{},
-				logger:     tt.fields.logger,
 				stateValue: tt.fields.stateValue,
 			}
 			got, err := kv.Get(tt.args.table, tt.args.rowkey)
@@ -113,7 +112,6 @@ func TestKeyValStateMachine_Apply(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			kv := &KeyValStateMachine{
 				mutex:      sync.RWMutex{},
-				logger:     tt.fields.logger,
 				stateValue: tt.fields.stateValue,
 			}
 			got, err := kv.Apply(tt.args.delta)

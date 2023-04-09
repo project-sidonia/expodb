@@ -18,25 +18,23 @@ import (
 type fsm struct {
 	logger *zap.Logger
 
-	fsmProvider machines.FSMProvider
+	fsmProvider machines.StateMachine
 
 	ShardID   uint64
 	ReplicaID uint64
 	Count     uint64
 }
 
-type Query struct {
-	Key      uint16
-	FSMQuery interface{}
-}
-
 // NewExampleStateMachine creates and return a new ExampleStateMachine object.
 func NewFSM(shardID uint64, replicaID uint64) sm.IStateMachine {
-	return &fsm{
-		ShardID:   shardID,
-		ReplicaID: replicaID,
-		Count:     0,
+	raftKvpStore := simplestore.New()
+	f := &fsm{
+		fsmProvider: raftKvpStore,
+		ShardID:     shardID,
+		ReplicaID:   replicaID,
+		Count:       0,
 	}
+	return f
 }
 
 // Apply implements the raft.FSM.Apply interface and applies a Raft log entry
@@ -48,10 +46,9 @@ func NewFSM(shardID uint64, replicaID uint64) sm.IStateMachine {
 //
 // The returned value is returned to the client as the ApplyFuture.Response.
 func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
-	res, err := fsm.fsmProvider.Apply(logEntry)
+	res, err := fsm.fsmProvider.Apply(logEntry.Data)
 	if err != nil {
-		fsm.logger.Error("Failed to apply raft log to finite state machines: err:%v", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to apply raft log to finite state machines: %w", err)
 	}
 	return res
 }
@@ -71,7 +68,7 @@ func (fsm *fsm) Apply(logEntry *raft.Log) interface{} {
 // be called concurrently with FSMSnapshot.Persist. This means the FSM should
 // be implemented to allow for concurrent updates while a snapshot is happening.
 func (fsm *fsm) Snapshot() (raft.FSMSnapshot, error) {
-	state, err := fsm.fsmProvider.SnapshotAll()
+	state, err := fsm.fsmProvider.Persist()
 	if err != nil {
 		fsm.logger.Error("Failed to get snapshots from finite state machines: err:%v", zap.Error(err))
 		return nil, err
@@ -89,10 +86,9 @@ func (fsm *fsm) Restore(serialized io.ReadCloser) error {
 	if err := json.NewDecoder(serialized).Decode(&snapshot); err != nil {
 		return err
 	}
-	err := fsm.fsmProvider.RestoreAll(snapshot.State)
+	err := fsm.fsmProvider.Restore(snapshot.State)
 	if err != nil {
-		fsm.logger.Error("Failed to get restore snapshots for finite state machines: err:%v", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to get restore snapshots for finite state machines: %w", err)
 	}
 	return nil
 }
@@ -101,7 +97,7 @@ func (fsm *fsm) Restore(serialized io.ReadCloser) error {
 // response to a Snapshot.  It must be safe to invoke FSMSnapshot methods with concurrent
 // calls to Apply.
 type fsmSnapshot struct {
-	State map[uint16][]byte `json:"snapshot_state"`
+	State []byte `json:"snapshot_state"`
 }
 
 // Persist should dump all necessary state to the WriteCloser 'sink',
@@ -137,49 +133,16 @@ func (f *fsmSnapshot) Release() {
 	// Nothing to do here.
 }
 
-// TODO Implement this interface:
-// raft.BatchingFSM extends the FSM interface to add an ApplyBatch function. This can
-// optionally be implemented by clients to enable multiple logs to be applied to
-// the FSM in batches. Up to MaxAppendEntries could be sent in a batch.
-/*
-type BatchingFSM interface {
-	// ApplyBatch is invoked once a batch of log entries has been committed and
-	// are ready to be applied to the FSM. ApplyBatch will take in an array of
-	// log entries. These log entries will be in the order they were committed,
-	// will not have gaps, and could be of a few log types. Clients should check
-	// the log type prior to attempting to decode the data attached. Presently
-	// the LogCommand and LogConfiguration types will be sent.
-	//
-	// The returned slice must be the same length as the input and each response
-	// should correlate to the log at the same index of the input. The returned
-	// values will be made available in the ApplyFuture returned by Raft.Apply
-	// method if that method was called on the same Raft node as the FSM.
-	ApplyBatch([]*Log) []interface{}
-
-	FSM
-}
-*/
-func (fsm *fsm) ApplyBatch(logEntries []*raft.Log) []interface{} {
-	return fsm.fsmProvider.ApplyBatch(logEntries)
-}
-
 // Lookup performs local lookup on the fsm instance. In this example,
 // we always return the Count value as a little endian binary encoded byte
 // slice.
 func (s *fsm) Lookup(e interface{}) (interface{}, error) {
-	query, ok := e.(Query)
-	if !ok {
-		return nil, fmt.Errorf("invalid query %#v", e)
-	}
-	return s.fsmProvider.Lookup(query.Key, query.FSMQuery)
+	return s.fsmProvider.Lookup(e)
 }
 
 // Update updates the object using the specified committed raft entry.
 func (s *fsm) Update(e sm.Entry) (sm.Result, error) {
-	resp, err := s.fsmProvider.Apply(&raft.Log{
-		Index: e.Index,
-		Data:  e.Cmd,
-	})
+	resp, err := s.fsmProvider.Apply(e.Cmd)
 	if err != nil {
 		return sm.Result{Value: simplestore.ResultCodeFailure}, err
 	}
@@ -194,7 +157,7 @@ func (fsm *fsm) PrepareSnapshot() (ctx interface{}, err error) {
 }
 
 func (f *fsm) SaveSnapshot(w io.Writer, sfc sm.ISnapshotFileCollection, stopc <-chan struct{}) (err error) {
-	state, err := f.fsmProvider.SnapshotAll()
+	state, err := f.fsmProvider.Persist()
 	if err != nil {
 		return fmt.Errorf("failed to get snapshots from finite state machines: %w", err)
 	}
@@ -207,12 +170,12 @@ func (f *fsm) SaveSnapshot(w io.Writer, sfc sm.ISnapshotFileCollection, stopc <-
 }
 
 func (f *fsm) RecoverFromSnapshot(r io.Reader, sfc []sm.SnapshotFile, stopc <-chan struct{}) (err error) {
-	var state map[uint16][]byte
+	var state []byte
 	if err := json.NewDecoder(r).Decode(&state); err != nil {
 		return fmt.Errorf("failed to decode snapshot: %w", err)
 	}
 
-	if err := f.fsmProvider.RestoreAll(state); err != nil {
+	if err := f.fsmProvider.Restore(state); err != nil {
 		return fmt.Errorf("failed to get restore snapshots for finite state machines: %w", err)
 	}
 	return nil
