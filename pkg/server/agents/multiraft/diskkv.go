@@ -86,8 +86,7 @@ func (r *pebbledb) lookup(query []byte) (map[string]string, error) {
 	iter := r.db.NewIter(&pebble.IterOptions{LowerBound: query, UpperBound: append(query, 0xff)})
 	resp := map[string]string{}
 	prefix := append(query, ':')
-	fmt.Println("query", string(query), iter.First())
-	for ; iter.Valid(); iter.Next() {
+	for iter.First(); iter.Valid(); iter.Next() {
 		if bytes.Contains(iter.Key(), prefix) {
 			key := make([]byte, len(iter.Key())-len(prefix))
 			copy(key, iter.Key()[len(prefix):])
@@ -148,6 +147,12 @@ func createDB(dbdir string) (*pebbledb, error) {
 		MaxManifestFileSize: 1024 * 32,
 		MemTableSize:        1024 * 32,
 		Cache:               cache,
+		//Merger: &pebble.Merger{
+		//	Name: "custommerger",
+		//	Merge: func(key, value []byte) (pebble.ValueMerger, error) {
+		//		return pebble.DefaultMerger.Merge(key, value)
+		//	},
+		//},
 	}
 	if err := os.MkdirAll(dbdir, 0755); err != nil {
 		return nil, err
@@ -280,7 +285,6 @@ func cleanupNodeDataDir(dir string) error {
 		if !fi.IsDir() {
 			continue
 		}
-		fmt.Printf("dbdir %s, fi.name %s, dir %s\n", dbdir, fi.Name(), dir)
 		toDelete := filepath.Join(dir, fi.Name())
 		if toDelete != dbdir {
 			fmt.Printf("removing %s\n", toDelete)
@@ -383,7 +387,6 @@ func (d *DiskKV) Lookup(e interface{}) (interface{}, error) {
 	key := query.Table + ":" + query.RowKey
 	db := (*pebbledb)(atomic.LoadPointer(&d.db))
 	if db != nil {
-		fmt.Println(key)
 		v, err := db.lookup([]byte(key))
 		if err == nil && d.closed {
 			panic("lookup returned valid result when DiskKV is already closed")
@@ -465,10 +468,6 @@ func (d *DiskKV) PrepareSnapshot() (interface{}, error) {
 	}, nil
 }
 
-func iteratorIsValid(iter *pebble.Iterator) bool {
-	return iter.Valid()
-}
-
 // saveToWriter saves all existing key-value pairs to the provided writer.
 // As an example, we use the most straight forward way to implement this.
 func (d *DiskKV) saveToWriter(db *pebbledb,
@@ -476,7 +475,7 @@ func (d *DiskKV) saveToWriter(db *pebbledb,
 	iter := ss.NewIter(db.ro)
 	defer iter.Close()
 	values := make([]*KVData, 0)
-	for iter.First(); iteratorIsValid(iter); iter.Next() {
+	for iter.First(); iter.Valid(); iter.Next() {
 		kv := &KVData{
 			Key: string(iter.Key()),
 			Val: string(iter.Value()),

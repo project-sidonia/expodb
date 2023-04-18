@@ -86,7 +86,7 @@ func nodeDataFromSerf(m serf.Member) (*nodedata, error) {
 }
 
 // ID returns the ID of the current node.
-func (n *nodedata) Id() string {
+func (n *nodedata) ID() string {
 	return n.id
 }
 

@@ -12,7 +12,7 @@ import (
 // then it kills the leader loop and stops running it.
 func (n *server) monitorLeadership(ctx context.Context) error {
 
-	leaderCh := n.raftAgent.LeaderNotifyCh()
+	leaderCh := n.raftNotifyCh
 	var lCtx context.Context
 	var lCan context.CancelFunc
 	var leaderLoop sync.WaitGroup

@@ -6,14 +6,25 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/server/agents/multiraft"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
 	machines "github.com/epsniff/expodb/pkg/server/state-machines"
+	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
 	"github.com/hashicorp/serf/serf"
+	"github.com/lni/dragonboat/v4"
+	dgConfig "github.com/lni/dragonboat/v4/config"
+	"github.com/lni/dragonboat/v4/raftio"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	shardID1 uint64 = 100
 )
 
 type server struct {
@@ -24,29 +35,37 @@ type server struct {
 
 	serfAgent *serfagent.Agent
 
-	raftAgent raftAgent
+	raftNotifyCh chan bool
+	nh           *dragonboat.NodeHost
+	raftAgent    raftAgent
+
+	replicaID uint64
 }
 
 type raftAgent interface {
-	LeaderNotifyCh() <-chan bool
-	AddVoter(id, peerAddress string) error
-	Apply(val machines.RaftEntry) error
-	GetByRowKey(table, key string) (map[string]string, error)
-	IsLeader() bool
+	AddVoter(shardID, replicaID uint64, peerAddress string) error
+	Apply(shardID uint64, val machines.RaftEntry) error
+	Read(shardID uint64, query interface{}) (interface{}, error)
+	IsLeader(shardID uint64) (bool, error)
 	//LeaderAddress() string
 	Shutdown() error
 }
 
 // GetByRowKey gets a value from the raft key value fsm
-func (n *server) GetByRowKey(table, key string) (map[string]string, error) {
-	val, err := n.raftAgent.GetByRowKey(table, key)
-	return val, err
-}
-
-func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, error) {
-	panic("not implemented")
-	// vals, err := n.raftKvpStore.GetByQuery(table, query)
-	// return vals, err
+func (n *server) GetByRowKey(table, rowKey string) (map[string]string, error) {
+	query := simplestore.Query{
+		Table:  table,
+		RowKey: rowKey,
+	}
+	val, err := n.raftAgent.Read(shardID1, query)
+	if err != nil {
+		return nil, err
+	}
+	resp, ok := val.(map[string]string)
+	if !ok {
+		return nil, fmt.Errorf("converting result to map[string]string: %T", val)
+	}
+	return resp, err
 }
 
 // SetKeyVal sets a value in the raft key value fsm, if we aren't the
@@ -54,41 +73,90 @@ func (n *server) GetByRowByQuery(table, query string) ([]map[string]string, erro
 func (n *server) SetKeyVal(table, key, col, val string) error {
 	//kve := simplestore.NewKeyValEvent(simplestore.UpdateRowOp, table, col, key, val)
 	kve := multiraft.KVData{Key: table + ":" + key + ":" + col, Val: val}
-	return n.raftAgent.Apply(kve)
+	return n.raftAgent.Apply(shardID1, kve)
+}
+
+func parseNodeID(nodeName string) (uint64, error) {
+	// Assumes "node-1", "node-2", etc.
+	parts := strings.Split(nodeName, "-")
+	replicaID, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse nodeid %s: %w", nodeName, err)
+	}
+	return replicaID, nil
 }
 
 func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	if err := os.MkdirAll(config.SerfDataDir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to make serf data dir: %w", err)
+		return nil, fmt.Errorf("making serf data dir: %w", err)
 	}
 	serfAgent, err := serfagent.New(config, logger.Named("serf-agent"))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create serf agent: %w", err)
+		return nil, fmt.Errorf("creating serf agent: %w", err)
+
 	}
 
-	if err := os.MkdirAll(config.RaftDataDir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to make raft data dir: %w", err)
-	}
-	raftAgent, err := multiraft.New(config, logger.Named("raft-agent"))
+	replicaID, err := parseNodeID(config.ID())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create raft agent: %w", err)
+		return nil, err
 	}
-
 	ser := &server{
 		config: config,
 		logger: logger,
 
 		metadata: NewMetadata(),
 
-		raftAgent: raftAgent,
-
-		serfAgent: serfAgent,
+		serfAgent:    serfAgent,
+		raftNotifyCh: make(chan bool, 1),
+		replicaID:    replicaID,
 	}
 
+	if err := os.MkdirAll(config.RaftDataDir, 0700); err != nil {
+		return nil, fmt.Errorf("making raft data dir: %w", err)
+	}
+
+	datadir := filepath.Join(config.RaftDataDir, "multigroup-data", config.ID())
+
+	// change the log verbosity
+	//logger.GetLogger("raft").SetLevel(logger.ERROR)
+	//logger.GetLogger("rsm").SetLevel(logger.WARNING)
+	//logger.GetLogger("transport").SetLevel(logger.WARNING)
+	//logger.GetLogger("grpc").SetLevel(logger.WARNING)
+	nhc := dgConfig.NodeHostConfig{
+		WALDir:            datadir,
+		NodeHostDir:       datadir,
+		RTTMillisecond:    200,
+		RaftAddress:       fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort),
+		RaftEventListener: ser,
+	}
+	// create a NodeHost instance. it is a facade interface allowing access to
+	// all functionalities provided by dragonboat.
+	nh, err := dragonboat.NewNodeHost(nhc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create nodehost, %v", err)
+	}
+	members := map[uint64]string{}
+	if config.Bootstrap {
+		members[replicaID] = nh.RaftAddress()
+	}
+	raftAgent, err := multiraft.New(nh, ser.replicaID, shardID1, members)
+	if err != nil {
+		return nil, fmt.Errorf("creating raft agent: %w", err)
+	}
+
+	ser.raftAgent = raftAgent
+	ser.nh = nh
 	// register ourselfs as a handler for serf events. See (n *server) HandleEvent(e serf.Event)
 	serfAgent.RegisterEventHandler(ser)
 
 	return ser, nil
+}
+
+func (n *server) LeaderUpdated(info raftio.LeaderInfo) {
+	// TODO (ajr) When we have actual multiraft!
+	if info.ShardID == shardID1 {
+		n.raftNotifyCh <- info.LeaderID == n.replicaID
+	}
 }
 
 // HandleEvent is our tap into serf events.  As the Serf(aka gossip) agent detects changes to the cluster
@@ -106,22 +174,39 @@ func (n *server) HandleEvent(e serf.Event) {
 					zap.String("serf.Member", fmt.Sprintf("%+v", m)), zap.Error(err),
 				)
 			}
-			if !n.raftAgent.IsLeader() {
-				n.logger.Info("Not the raft leader, skipping join")
-				// We aren't the raft leader nothing else to do but to record the nodes metadata.
+			isLeader, err := n.raftAgent.IsLeader(shardID1)
+			if err != nil {
+				n.logger.Error("Error processing metadata",
+					zap.String("serf.Member", fmt.Sprintf("%+v", m)), zap.Error(err),
+				)
 				continue
+			} else {
+				if !isLeader {
+					n.logger.Info("Not the raft leader, skipping join")
+					// We aren't the raft leader nothing else to do but to record the nodes metadata.
+					continue
+				}
 			}
 
 			// join new peer as a raft voter
-			err = n.raftAgent.AddVoter(nodedata.Id(), nodedata.RaftAddr())
+			replicaID, err := parseNodeID(nodedata.ID())
+			if err != nil {
+				n.logger.Error("Error parsing nodedata id",
+					zap.String("peer.id", nodedata.ID()),
+					zap.String("peer.remoteaddr", nodedata.RaftAddr()),
+					zap.Error(err),
+				)
+				continue
+			}
+			err = n.raftAgent.AddVoter(shardID1, replicaID, nodedata.RaftAddr())
 			if err != nil {
 				n.logger.Error("Error joining peer to Raft",
-					zap.String("peer.id", nodedata.Id()),
+					zap.String("peer.id", nodedata.ID()),
 					zap.String("peer.remoteaddr", nodedata.RaftAddr()),
 					zap.Error(err),
 				)
 			}
-			n.logger.Info("Peer joined Raft", zap.String("peer.id", nodedata.Id()),
+			n.logger.Info("Peer joined Raft", zap.String("peer.id", nodedata.ID()),
 				zap.String("peer.remoteaddr", nodedata.RaftAddr()))
 		}
 	case serf.EventMemberReap:
