@@ -81,12 +81,6 @@ func (a *Agent) Read(query interface{}) (interface{}, error) {
 	return res, err
 }
 
-// IsLeader returns true if this agent is the leader.
-func (a *Agent) IsLeader() (bool, error) {
-	leaderID, _, ok, err := a.nh.GetLeaderID(a.shardID)
-	return ok && a.replicaID == leaderID, err
-}
-
 // Shutdown stops the raft server.
 func (a *Agent) Shutdown() error {
 	a.nh.Close()

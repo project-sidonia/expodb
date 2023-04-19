@@ -57,9 +57,13 @@ type raftAgent interface {
 	AddVoter(replicaID uint64, peerAddress string) error
 	Apply(val machines.RaftEntry) error
 	Read(query interface{}) (interface{}, error)
-	IsLeader() (bool, error)
-	//LeaderAddress() string
 	Shutdown() error
+}
+
+// IsLeader returns true if this agent is the leader.
+func (n *server) isLeader(shardID uint64) (bool, error) {
+	leaderID, _, ok, err := n.nh.GetLeaderID(shardID)
+	return ok && n.replicaID == leaderID, err
 }
 
 func (n *server) pickShard(table, rowKey string) uint64 {
@@ -168,7 +172,6 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 		}
 	}
 
-	fmt.Println("created server with", len(ser.raftAgents))
 	// register ourselfs as a handler for serf events. See (n *server) HandleEvent(e serf.Event)
 	serfAgent.RegisterEventHandler(ser)
 
@@ -257,14 +260,9 @@ func (n *server) scheduleShards(ctx context.Context) error {
 						return fmt.Errorf("creating shard %d: %w", shardID, err)
 					}
 				}
-				shardAgent, ok := n.raftAgents[uint64(shardID)]
-				if !ok {
-					// Not a member of the shard
-					continue
-				}
-				isLeader, err := shardAgent.IsLeader()
+				isLeader, err := n.isLeader(uint64(shardID))
 				if err != nil {
-					return fmt.Errorf("checking if leader: %w", err)
+					return fmt.Errorf("checking leader: %w", err)
 				}
 				if !isLeader {
 					continue
@@ -294,8 +292,8 @@ func (n *server) scheduleShards(ctx context.Context) error {
 					zap.String("peer.remoteaddr", nodedata.RaftAddr()))
 			}
 		}
+		timer.Reset(30 * time.Second)
 	}
-	timer.Reset(30 * time.Second)
 	return nil
 }
 
