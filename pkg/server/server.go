@@ -14,14 +14,14 @@ import (
 	"time"
 
 	"github.com/buraksezer/consistent"
-	"github.com/epsniff/expodb/pkg/config"
-	"github.com/epsniff/expodb/pkg/server/agents/multiraft"
-	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
-	"github.com/epsniff/expodb/pkg/server/machines"
 	"github.com/hashicorp/serf/serf"
 	"github.com/lni/dragonboat/v4"
 	dgConfig "github.com/lni/dragonboat/v4/config"
 	"github.com/lni/dragonboat/v4/raftio"
+	"github.com/project-sidonia/expodb/pkg/config"
+	"github.com/project-sidonia/expodb/pkg/server/agents/multiraft"
+	serfagent "github.com/project-sidonia/expodb/pkg/server/agents/serf"
+	"github.com/project-sidonia/expodb/pkg/server/machines"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )

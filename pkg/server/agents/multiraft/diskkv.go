@@ -17,7 +17,7 @@ import (
 	"unsafe"
 
 	"github.com/cockroachdb/pebble"
-	machines "github.com/epsniff/expodb/pkg/server/machines"
+	machines "github.com/project-sidonia/expodb/pkg/server/machines"
 
 	sm "github.com/lni/dragonboat/v4/statemachine"
 )

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/epsniff/expodb/pkg/config"
-	"github.com/epsniff/expodb/pkg/server"
+	"github.com/project-sidonia/expodb/pkg/config"
+	"github.com/project-sidonia/expodb/pkg/server"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 )
