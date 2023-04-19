@@ -18,7 +18,6 @@ import (
 	"github.com/epsniff/expodb/pkg/server/agents/multiraft"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
 	"github.com/epsniff/expodb/pkg/server/machines"
-	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/serf/serf"
 	"github.com/lni/dragonboat/v4"
 	dgConfig "github.com/lni/dragonboat/v4/config"
@@ -46,18 +45,51 @@ type server struct {
 	nh *dragonboat.NodeHost
 
 	raftAgentsMu sync.Mutex
-	raftAgents   map[uint64]raftAgent
+	raftAgents   map[uint64]bool
 
 	consistent *consistent.Consistent
 
 	replicaID uint64
 }
 
-type raftAgent interface {
-	AddVoter(replicaID uint64, peerAddress string) error
-	Apply(val machines.RaftEntry) error
-	Read(query interface{}) (interface{}, error)
-	Shutdown() error
+// AddVoter adds a voting peer to the raft consenses group.
+// Can only be called on the leader.
+func (a *server) AddVoter(ctx context.Context, shardID, replicaID uint64, peerAddress string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return a.nh.SyncRequestAddReplica(ctx, shardID, replicaID, peerAddress, 0)
+}
+
+// Apply is used to apply a command to the FSM in a highly consistent
+// manner.  This call blocks until the log is conserted commited or
+// until 5 seconds is reached.
+func (a *server) Apply(ctx context.Context, shardID uint64, val machines.RaftEntry) error {
+	// TODO: reuse the session?
+	cs := a.nh.GetNoOPSession(shardID)
+	data, err := val.Marshal()
+	if err != nil {
+		return fmt.Errorf("failed to marshal raft entry: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err = a.nh.SyncPropose(ctx, cs, data)
+	return err
+}
+
+func (a *server) Read(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	res, err := a.nh.SyncRead(ctx, shardID, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read: %w", err)
+	}
+	return res, err
+}
+
+// Shutdown stops the raft server.
+func (a *server) Shutdown() error {
+	a.nh.Close()
+	return nil
 }
 
 // IsLeader returns true if this agent is the leader.
@@ -80,7 +112,8 @@ func (n *server) GetByRowKey(table, rowKey string) (map[string]string, error) {
 		RowKey: rowKey,
 	}
 	// TODO: forward request if we don't have the given shard
-	val, err := n.raftAgents[n.pickShard(table, rowKey)].Read(query)
+	shardID := n.pickShard(table, rowKey)
+	val, err := n.Read(context.Background(), shardID, query)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +129,9 @@ func (n *server) GetByRowKey(table, rowKey string) (map[string]string, error) {
 func (n *server) SetKeyVal(table, rowKey, col, val string) error {
 	//kve := simplestore.NewKeyValEvent(simplestore.UpdateRowOp, table, col, key, val)
 	kve := multiraft.KVData{Key: table + ":" + rowKey + ":" + col, Val: val}
-	return n.raftAgents[n.pickShard(table, rowKey)].Apply(kve)
+	shardID := n.pickShard(table, rowKey)
+	err := n.Apply(context.Background(), shardID, kve)
+	return err
 }
 
 func parseNodeID(nodeName string) (uint64, error) {
@@ -134,9 +169,8 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 			bool
 			uint64
 		}, 1),
-		replicaID: replicaID,
-
-		raftAgents: map[uint64]raftAgent{},
+		replicaID:  replicaID,
+		raftAgents: map[uint64]bool{},
 	}
 
 	if err := os.MkdirAll(config.RaftDataDir, 0700); err != nil {
@@ -179,26 +213,35 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 }
 
 func (n *server) NewShard(bootstrap bool, shardID uint64) error {
+	n.raftAgentsMu.Lock()
+	defer n.raftAgentsMu.Unlock()
 
 	datadir := filepath.Join(n.config.RaftDataDir, "statemachine-data", n.config.ID())
 	members := map[uint64]string{}
 	if bootstrap {
 		members[n.replicaID] = n.nh.RaftAddress()
 	}
-	shardAgent, err := multiraft.New(n.nh, n.replicaID, shardID, members, datadir)
-	if err != nil {
-		return fmt.Errorf("creating raft agent: %w", err)
+
+	rc := dgConfig.Config{
+		ReplicaID:          n.replicaID,
+		ElectionRTT:        5,
+		HeartbeatRTT:       1,
+		CheckQuorum:        true,
+		SnapshotEntries:    10,
+		CompactionOverhead: 5,
+		ShardID:            shardID,
 	}
 
-	n.raftAgentsMu.Lock()
-	defer n.raftAgentsMu.Unlock()
-	n.raftAgents[shardID] = shardAgent
+	if err := n.nh.StartOnDiskReplica(members, len(members) == 0, multiraft.NewDiskKV(datadir), rc); err != nil {
+		return fmt.Errorf("starting replica: %w", err)
+	}
+	n.raftAgents[shardID] = true
 	return nil
 }
 
 func (n *server) LeaderUpdated(info raftio.LeaderInfo) {
 	// TODO (ajr) When we have actual multiraft!
-	if n.raftAgents[info.ShardID] != nil {
+	if v, ok := n.raftAgents[info.ShardID]; ok && v {
 		n.raftNotifyCh <- struct {
 			bool
 			uint64
@@ -254,7 +297,7 @@ func (n *server) scheduleShards(ctx context.Context) error {
 			}
 			for _, member := range members {
 				// Handle removing ourselves from shards we're not a part of
-				if n.config.ID() == member.String() && n.raftAgents[uint64(shardID)] == nil {
+				if v, ok := n.raftAgents[uint64(shardID)]; n.config.ID() == member.String() && (!ok || !v) {
 					// We are the closest member to this shard, so we should schedule it.
 					if err := n.NewShard(false, uint64(shardID)); err != nil {
 						return fmt.Errorf("creating shard %d: %w", shardID, err)
@@ -269,7 +312,11 @@ func (n *server) scheduleShards(ctx context.Context) error {
 				}
 
 				// TODO check bool for error
-				nodedata, _ := n.metadata.FindByID(member.String())
+				nodedata, ok := n.metadata.FindByID(member.String())
+				if !ok {
+					n.logger.Error("Finding nodedata id", zap.String("member", member.String()))
+					continue
+				}
 				// join new peer as a raft voter
 				replicaID, err := parseNodeID(nodedata.ID())
 				if err != nil {
@@ -280,7 +327,7 @@ func (n *server) scheduleShards(ctx context.Context) error {
 					)
 					continue
 				}
-				err = n.raftAgents[uint64(shardID)].AddVoter(replicaID, nodedata.RaftAddr())
+				err = n.AddVoter(context.Background(), uint64(shardID), replicaID, nodedata.RaftAddr())
 				if err != nil {
 					n.logger.Error("Error joining peer to Raft",
 						zap.String("peer.id", nodedata.ID()),
@@ -391,14 +438,8 @@ func (n *server) Serve() error {
 	g.Go(func() error {
 		<-ctx.Done()
 		n.logger.Info("Stopping raft agent")
-		var errors *multierror.Error
-		for _, agent := range n.raftAgents {
-			err := agent.Shutdown()
-			if err != nil {
-				err = multierror.Append(errors, err)
-			}
-		}
-		return errors.ErrorOrNil()
+		n.nh.Close()
+		return nil
 	})
 
 	n.logger.Info("Server started")
