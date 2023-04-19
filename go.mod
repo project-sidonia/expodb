@@ -3,6 +3,7 @@ module github.com/epsniff/expodb
 go 1.20
 
 require (
+	github.com/buraksezer/consistent v0.10.0
 	github.com/cockroachdb/pebble v0.0.0-20221207173255-0f086d933dac
 	github.com/hashicorp/go-hclog v1.5.0
 	github.com/hashicorp/go-multierror v1.1.1

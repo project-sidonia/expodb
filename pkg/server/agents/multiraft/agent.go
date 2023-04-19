@@ -16,6 +16,7 @@ import (
 type Agent struct {
 	ctx       context.Context
 	replicaID uint64
+	shardID   uint64
 	nh        *dragonboat.NodeHost
 	cs        *client.Session
 }
@@ -25,6 +26,7 @@ func New(nh *dragonboat.NodeHost, replicaID, shardID uint64, initialMembers map[
 		ctx:       context.Background(),
 		nh:        nh,
 		replicaID: replicaID,
+		shardID:   shardID,
 	}
 	// config for raft
 	rc := dgConfig.Config{
@@ -47,18 +49,18 @@ func New(nh *dragonboat.NodeHost, replicaID, shardID uint64, initialMembers map[
 
 // AddVoter adds a voting peer to the raft consenses group.
 // Can only be called on the leader.
-func (a *Agent) AddVoter(shardID, replicaID uint64, peerAddress string) error {
+func (a *Agent) AddVoter(replicaID uint64, peerAddress string) error {
 	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
 	defer cancel()
-	return a.nh.SyncRequestAddReplica(ctx, shardID, replicaID, peerAddress, 0)
+	return a.nh.SyncRequestAddReplica(ctx, a.shardID, replicaID, peerAddress, 0)
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
 // manner.  This call blocks until the log is conserted commited or
 // until 5 seconds is reached.
-func (a *Agent) Apply(shardID uint64, val machines.RaftEntry) error {
+func (a *Agent) Apply(val machines.RaftEntry) error {
 	// TODO: reuse the session?
-	a.cs = a.nh.GetNoOPSession(shardID)
+	a.cs = a.nh.GetNoOPSession(a.shardID)
 	data, err := val.Marshal()
 	if err != nil {
 		return fmt.Errorf("failed to marshal raft entry: %w", err)
@@ -69,10 +71,10 @@ func (a *Agent) Apply(shardID uint64, val machines.RaftEntry) error {
 	return err
 }
 
-func (a *Agent) Read(shardID uint64, query interface{}) (interface{}, error) {
+func (a *Agent) Read(query interface{}) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
 	defer cancel()
-	res, err := a.nh.SyncRead(ctx, shardID, query)
+	res, err := a.nh.SyncRead(ctx, a.shardID, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read: %w", err)
 	}
@@ -80,8 +82,8 @@ func (a *Agent) Read(shardID uint64, query interface{}) (interface{}, error) {
 }
 
 // IsLeader returns true if this agent is the leader.
-func (a *Agent) IsLeader(shardID uint64) (bool, error) {
-	leaderID, _, ok, err := a.nh.GetLeaderID(shardID)
+func (a *Agent) IsLeader() (bool, error) {
+	leaderID, _, ok, err := a.nh.GetLeaderID(a.shardID)
 	return ok && a.replicaID == leaderID, err
 }
 

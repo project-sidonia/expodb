@@ -37,6 +37,15 @@ func (m *metadata) Add(me serf.Member) (*nodedata, error) {
 }
 
 // FindByRaftAddr finds a node by its raft address.
+func (m *metadata) FindByID(n string) (*nodedata, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	meta, ok := m.nodesById[n]
+	return meta, ok
+}
+
+// FindByRaftAddr finds a node by its raft address.
 func (m *metadata) FindByRaftAddr(n string) (*nodedata, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

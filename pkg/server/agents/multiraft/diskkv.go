@@ -287,7 +287,6 @@ func cleanupNodeDataDir(dir string) error {
 		}
 		toDelete := filepath.Join(dir, fi.Name())
 		if toDelete != dbdir {
-			fmt.Printf("removing %s\n", toDelete)
 			if err := os.RemoveAll(toDelete); err != nil {
 				return err
 			}
@@ -420,7 +419,6 @@ func (d *DiskKV) Update(ents []sm.Entry) ([]sm.Entry, error) {
 		if err := json.Unmarshal(e.Cmd, dataKV); err != nil {
 			panic(err)
 		}
-		fmt.Println("dataKV", dataKV.Key, dataKV.Val)
 		wb.Set([]byte(dataKV.Key), []byte(dataKV.Val), db.wo)
 		ents[idx].Result = sm.Result{Value: uint64(len(ents[idx].Cmd))}
 	}
