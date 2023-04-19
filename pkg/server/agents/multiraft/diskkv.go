@@ -17,7 +17,7 @@ import (
 	"unsafe"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
+	machines "github.com/epsniff/expodb/pkg/server/machines"
 
 	sm "github.com/lni/dragonboat/v4/statemachine"
 )
@@ -179,9 +179,9 @@ func isNewRun(dir string) bool {
 	return false
 }
 
-func getNodeDBDirName(clusterID uint64, nodeID uint64) string {
+func getNodeDBDirName(datadir string, clusterID uint64, nodeID uint64) string {
 	part := fmt.Sprintf("%d_%d", clusterID, nodeID)
-	return filepath.Join(testDBDirName, part)
+	return filepath.Join(datadir, part)
 }
 
 func getNewRandomDBDirName(dir string) string {
@@ -306,15 +306,19 @@ type DiskKV struct {
 	db          unsafe.Pointer
 	closed      bool
 	aborted     bool
+	datadir     string
 }
 
 // NewDiskKV creates a new disk kv test state machine.
-func NewDiskKV(clusterID uint64, nodeID uint64) sm.IOnDiskStateMachine {
-	d := &DiskKV{
-		clusterID: clusterID,
-		nodeID:    nodeID,
+func NewDiskKV(datadir string) func(uint64, uint64) sm.IOnDiskStateMachine {
+	return func(clusterID uint64, nodeID uint64) sm.IOnDiskStateMachine {
+		d := &DiskKV{
+			datadir:   datadir,
+			clusterID: clusterID,
+			nodeID:    nodeID,
+		}
+		return d
 	}
-	return d
 }
 
 func (d *DiskKV) queryAppliedIndex(db *pebbledb) (uint64, error) {
@@ -336,7 +340,7 @@ func (d *DiskKV) queryAppliedIndex(db *pebbledb) (uint64, error) {
 // Open opens the state machine and return the index of the last Raft Log entry
 // already updated into the state machine.
 func (d *DiskKV) Open(stopc <-chan struct{}) (uint64, error) {
-	dir := getNodeDBDirName(d.clusterID, d.nodeID)
+	dir := getNodeDBDirName(d.datadir, d.clusterID, d.nodeID)
 	if err := createNodeDataDir(dir); err != nil {
 		panic(err)
 	}
@@ -379,7 +383,7 @@ func (d *DiskKV) Open(stopc <-chan struct{}) (uint64, error) {
 
 // Lookup queries the state machine.
 func (d *DiskKV) Lookup(e interface{}) (interface{}, error) {
-	query, ok := e.(simplestore.Query)
+	query, ok := e.(machines.Query)
 	if !ok {
 		return nil, fmt.Errorf("invalid query %#v", e)
 	}
@@ -530,7 +534,7 @@ func (d *DiskKV) RecoverFromSnapshot(r io.Reader,
 	if d.closed {
 		panic("recover from snapshot called after Close()")
 	}
-	dir := getNodeDBDirName(d.clusterID, d.nodeID)
+	dir := getNodeDBDirName(d.datadir, d.clusterID, d.nodeID)
 	dbdir := getNewRandomDBDirName(dir)
 	oldDirName, err := getCurrentDBDirName(dir)
 	if err != nil {

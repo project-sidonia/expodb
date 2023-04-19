@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"os"
 	"os/signal"
@@ -16,8 +17,7 @@ import (
 	"github.com/epsniff/expodb/pkg/config"
 	"github.com/epsniff/expodb/pkg/server/agents/multiraft"
 	serfagent "github.com/epsniff/expodb/pkg/server/agents/serf"
-	machines "github.com/epsniff/expodb/pkg/server/state-machines"
-	"github.com/epsniff/expodb/pkg/server/state-machines/simplestore"
+	"github.com/epsniff/expodb/pkg/server/machines"
 	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/serf/serf"
 	"github.com/lni/dragonboat/v4"
@@ -28,8 +28,7 @@ import (
 )
 
 const (
-	shardID1  uint64 = 0
-	numShards int    = 5
+	numShards int = 5
 )
 
 type server struct {
@@ -40,8 +39,11 @@ type server struct {
 
 	serfAgent *serfagent.Agent
 
-	raftNotifyCh chan bool
-	nh           *dragonboat.NodeHost
+	raftNotifyCh chan struct {
+		bool
+		uint64
+	}
+	nh *dragonboat.NodeHost
 
 	raftAgentsMu sync.Mutex
 	raftAgents   map[uint64]raftAgent
@@ -60,13 +62,21 @@ type raftAgent interface {
 	Shutdown() error
 }
 
+func (n *server) pickShard(table, rowKey string) uint64 {
+	f := fnv.New64a()
+	f.Write([]byte(table))
+	f.Write([]byte(rowKey))
+	return (f.Sum64() % uint64(numShards)) + 1
+}
+
 // GetByRowKey gets a value from the raft key value fsm
 func (n *server) GetByRowKey(table, rowKey string) (map[string]string, error) {
-	query := simplestore.Query{
+	query := machines.Query{
 		Table:  table,
 		RowKey: rowKey,
 	}
-	val, err := n.raftAgents[shardID1].Read(query)
+	// TODO: forward request if we don't have the given shard
+	val, err := n.raftAgents[n.pickShard(table, rowKey)].Read(query)
 	if err != nil {
 		return nil, err
 	}
@@ -79,10 +89,10 @@ func (n *server) GetByRowKey(table, rowKey string) (map[string]string, error) {
 
 // SetKeyVal sets a value in the raft key value fsm, if we aren't the
 // current leader then forward the request onto the leader node.
-func (n *server) SetKeyVal(table, key, col, val string) error {
+func (n *server) SetKeyVal(table, rowKey, col, val string) error {
 	//kve := simplestore.NewKeyValEvent(simplestore.UpdateRowOp, table, col, key, val)
-	kve := multiraft.KVData{Key: table + ":" + key + ":" + col, Val: val}
-	return n.raftAgents[shardID1].Apply(kve)
+	kve := multiraft.KVData{Key: table + ":" + rowKey + ":" + col, Val: val}
+	return n.raftAgents[n.pickShard(table, rowKey)].Apply(kve)
 }
 
 func parseNodeID(nodeName string) (uint64, error) {
@@ -115,9 +125,12 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 
 		metadata: NewMetadata(),
 
-		serfAgent:    serfAgent,
-		raftNotifyCh: make(chan bool, 1),
-		replicaID:    replicaID,
+		serfAgent: serfAgent,
+		raftNotifyCh: make(chan struct {
+			bool
+			uint64
+		}, 1),
+		replicaID: replicaID,
 
 		raftAgents: map[uint64]raftAgent{},
 	}
@@ -148,11 +161,14 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	}
 	ser.nh = nh
 	if config.Bootstrap {
-		if err := ser.NewShard(config.Bootstrap, shardID1); err != nil {
-			return nil, fmt.Errorf("creating shard: %w", err)
+		for shardID := 1; shardID < numShards+1; shardID++ {
+			if err := ser.NewShard(config.Bootstrap, uint64(shardID)); err != nil {
+				return nil, fmt.Errorf("creating shard %d: %w", shardID, err)
+			}
 		}
 	}
 
+	fmt.Println("created server with", len(ser.raftAgents))
 	// register ourselfs as a handler for serf events. See (n *server) HandleEvent(e serf.Event)
 	serfAgent.RegisterEventHandler(ser)
 
@@ -160,27 +176,30 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 }
 
 func (n *server) NewShard(bootstrap bool, shardID uint64) error {
+
+	datadir := filepath.Join(n.config.RaftDataDir, "statemachine-data", n.config.ID())
 	members := map[uint64]string{}
 	if bootstrap {
 		members[n.replicaID] = n.nh.RaftAddress()
 	}
-	shardAgent, err := multiraft.New(n.nh, n.replicaID, shardID, members)
+	shardAgent, err := multiraft.New(n.nh, n.replicaID, shardID, members, datadir)
 	if err != nil {
 		return fmt.Errorf("creating raft agent: %w", err)
 	}
 
 	n.raftAgentsMu.Lock()
 	defer n.raftAgentsMu.Unlock()
-	n.raftAgents = map[uint64]raftAgent{
-		shardID1: shardAgent,
-	}
+	n.raftAgents[shardID] = shardAgent
 	return nil
 }
 
 func (n *server) LeaderUpdated(info raftio.LeaderInfo) {
 	// TODO (ajr) When we have actual multiraft!
-	if info.ShardID == shardID1 {
-		n.raftNotifyCh <- info.LeaderID == n.replicaID
+	if n.raftAgents[info.ShardID] != nil {
+		n.raftNotifyCh <- struct {
+			bool
+			uint64
+		}{info.LeaderID == n.replicaID, info.ShardID}
 	}
 }
 
@@ -221,25 +240,28 @@ func (n *server) scheduleShards(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
-		// for i := 1; i < numShards+1; i++ {
-		if len(n.consistent.GetMembers()) < 3 {
-			n.logger.Warn("Not enough members to schedule shards", zap.Int("num_members", len(n.consistent.GetMembers())))
-			return nil
-		}
-		members, err := n.consistent.GetClosestNForPartition(int(shardID1), 3)
-		if err != nil {
-			return fmt.Errorf("getting closest members: %w", err)
-		}
-		for _, member := range members {
-			// Handle removing ourselves from shards we're not a part of
-			if n.config.ID() == member.String() && n.raftAgents[uint64(shardID1)] == nil {
-				// We are the closest member to this shard, so we should schedule it.
-				if err := n.NewShard(false, uint64(shardID1)); err != nil {
-					return fmt.Errorf("creating shard: %w", err)
-				}
-				break
+		for shardID := 1; shardID < numShards+1; shardID++ {
+			if len(n.consistent.GetMembers()) < 3 {
+				n.logger.Warn("Not enough members to schedule shards", zap.Int("num_members", len(n.consistent.GetMembers())))
+				return nil
 			}
-			for _, shardAgent := range n.raftAgents {
+			members, err := n.consistent.GetClosestNForPartition(int(shardID)-1, 3)
+			if err != nil {
+				return fmt.Errorf("getting closest members: %w", err)
+			}
+			for _, member := range members {
+				// Handle removing ourselves from shards we're not a part of
+				if n.config.ID() == member.String() && n.raftAgents[uint64(shardID)] == nil {
+					// We are the closest member to this shard, so we should schedule it.
+					if err := n.NewShard(false, uint64(shardID)); err != nil {
+						return fmt.Errorf("creating shard %d: %w", shardID, err)
+					}
+				}
+				shardAgent, ok := n.raftAgents[uint64(shardID)]
+				if !ok {
+					// Not a member of the shard
+					continue
+				}
 				isLeader, err := shardAgent.IsLeader()
 				if err != nil {
 					return fmt.Errorf("checking if leader: %w", err)
@@ -260,7 +282,7 @@ func (n *server) scheduleShards(ctx context.Context) error {
 					)
 					continue
 				}
-				err = n.raftAgents[shardID1].AddVoter(replicaID, nodedata.RaftAddr())
+				err = n.raftAgents[uint64(shardID)].AddVoter(replicaID, nodedata.RaftAddr())
 				if err != nil {
 					n.logger.Error("Error joining peer to Raft",
 						zap.String("peer.id", nodedata.ID()),

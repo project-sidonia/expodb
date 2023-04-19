@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	machines "github.com/epsniff/expodb/pkg/server/state-machines"
+	machines "github.com/epsniff/expodb/pkg/server/machines"
 
 	"github.com/lni/dragonboat/v4"
 	"github.com/lni/dragonboat/v4/client"
@@ -21,7 +21,7 @@ type Agent struct {
 	cs        *client.Session
 }
 
-func New(nh *dragonboat.NodeHost, replicaID, shardID uint64, initialMembers map[uint64]string) (*Agent, error) {
+func New(nh *dragonboat.NodeHost, replicaID, shardID uint64, initialMembers map[uint64]string, datadir string) (*Agent, error) {
 	a := &Agent{
 		ctx:       context.Background(),
 		nh:        nh,
@@ -39,8 +39,8 @@ func New(nh *dragonboat.NodeHost, replicaID, shardID uint64, initialMembers map[
 		ShardID:            shardID,
 	}
 
-	if err := nh.StartOnDiskReplica(initialMembers, len(initialMembers) == 0, NewDiskKV, rc); err != nil {
-		return nil, fmt.Errorf("failed to add cluster, %w", err)
+	if err := nh.StartOnDiskReplica(initialMembers, len(initialMembers) == 0, NewDiskKV(datadir), rc); err != nil {
+		return nil, fmt.Errorf("starting replica: %w", err)
 	}
 	a.nh = nh
 	a.replicaID = replicaID

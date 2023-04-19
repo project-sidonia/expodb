@@ -20,7 +20,7 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 		select {
 		case isLeader := <-leaderCh:
 			switch {
-			case isLeader:
+			case isLeader.bool:
 				if lCtx != nil {
 					n.logger.Warn("attempted to start the leader loop while running", zap.String("id", n.config.ID()))
 					continue
@@ -30,13 +30,13 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 				leaderLoop.Add(1)
 				go func(ctx context.Context) {
 					defer leaderLoop.Done()
-					n.leaderLoop(ctx)
+					n.leaderLoop(ctx, isLeader.uint64)
 				}(lCtx)
 				n.logger.Info("cluster leadership acquired", zap.String("id", n.config.ID()))
 
 			default:
 				if lCtx == nil {
-					n.logger.Warn("attempted to stop the leader loop while not running", zap.String("id", n.config.ID()))
+					//n.logger.Warn("attempted to stop the leader loop while not running", zap.String("id", n.config.ID()))
 					continue
 				}
 				n.logger.Info("shutting down leader loop", zap.String("id", n.config.ID()))
@@ -53,9 +53,9 @@ func (n *server) monitorLeadership(ctx context.Context) error {
 
 // leaderLoop is the code you want the leader to run.  For example, if you need a job
 // started ever N mins, this would be a good place to put it.
-func (n *server) leaderLoop(ctx context.Context) error {
+func (n *server) leaderLoop(ctx context.Context, shardID uint64) error {
 	// We are the leader, do leader stuff here.
 	<-ctx.Done()
-	n.logger.Info("leader loop exiting")
+	n.logger.Info("leader loop exiting", zap.Uint64("shard", shardID))
 	return nil
 }
