@@ -185,11 +185,15 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	//logger.GetLogger("transport").SetLevel(logger.WARNING)
 	//logger.GetLogger("grpc").SetLevel(logger.WARNING)
 	nhc := dgConfig.NodeHostConfig{
-		WALDir:            datadir,
-		NodeHostDir:       datadir,
-		RTTMillisecond:    200,
-		RaftAddress:       fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort),
-		RaftEventListener: ser,
+		WALDir:              datadir,
+		NodeHostDir:         datadir,
+		RTTMillisecond:      200,
+		RaftAddress:         fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort),
+		RaftEventListener:   ser,
+		AddressByNodeHostID: true,
+		// TODO (ajr) Set up the following
+		Gossip: dgConfig.GossipConfig{},
+		Expert: dgConfig.ExpertConfig{},
 	}
 	// create a NodeHost instance. it is a facade interface allowing access to
 	// all functionalities provided by dragonboat.
@@ -295,6 +299,11 @@ func (n *server) scheduleShards(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("getting closest members: %w", err)
 			}
+			isLeader, err := n.isLeader(uint64(shardID))
+			if err != nil {
+				n.logger.Warn("Checking leadership", zap.Int("shard", shardID), zap.Error(err))
+				//return fmt.Errorf("checking leader: %w", err)
+			}
 			for _, member := range members {
 				// Handle removing ourselves from shards we're not a part of
 				if v, ok := n.raftAgents[uint64(shardID)]; n.config.ID() == member.String() && (!ok || !v) {
@@ -302,10 +311,6 @@ func (n *server) scheduleShards(ctx context.Context) error {
 					if err := n.NewShard(false, uint64(shardID)); err != nil {
 						return fmt.Errorf("creating shard %d: %w", shardID, err)
 					}
-				}
-				isLeader, err := n.isLeader(uint64(shardID))
-				if err != nil {
-					return fmt.Errorf("checking leader: %w", err)
 				}
 				if !isLeader {
 					continue
