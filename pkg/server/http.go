@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/epsniff/expodb/pkg/server/machines"
+	"github.com/project-sidonia/expodb/pkg/server/machines"
 	"github.com/justinas/alice"
 	"go.uber.org/zap"
 )

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	machines "github.com/epsniff/expodb/pkg/server/machines"
+	machines "github.com/project-sidonia/expodb/pkg/server/machines"
 
 	"github.com/lni/dragonboat/v4"
 	"github.com/lni/dragonboat/v4/client"

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/epsniff/expodb/pkg/config"
+	"github.com/project-sidonia/expodb/pkg/config"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
 )

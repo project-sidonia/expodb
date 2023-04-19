@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/epsniff/expodb/pkg/config"
-	"github.com/epsniff/expodb/pkg/version"
+	"github.com/project-sidonia/expodb/pkg/config"
+	"github.com/project-sidonia/expodb/pkg/version"
 	"github.com/hashicorp/memberlist"
 	"github.com/hashicorp/serf/serf"
 	"go.uber.org/zap"
