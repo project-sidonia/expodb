@@ -185,14 +185,6 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	//logger.GetLogger("transport").SetLevel(logger.WARNING)
 	//logger.GetLogger("grpc").SetLevel(logger.WARNING)
 
-	if config.Bootstrap {
-		for shardID := 1; shardID < numShards+1; shardID++ {
-			if err := ser.NewShard(config.Bootstrap, uint64(shardID)); err != nil {
-				return nil, fmt.Errorf("creating shard %d: %w", shardID, err)
-			}
-		}
-	}
-
 	// register ourselves as a handler for serf events. See (n *server) HandleEvent(e serf.Event)
 	serfAgent.RegisterEventHandler(ser)
 
@@ -253,14 +245,26 @@ func (n *server) HandleEvent(e serf.Event) {
 					zap.String("serf.Member", fmt.Sprintf("%+v", m)), zap.Error(err),
 				)
 			}
+			replicaID, err := parseNodeID(nodedata.ID())
+			if err != nil {
+				n.logger.Error("Error parsing node ID", zap.String("node-id", nodedata.ID()), zap.Error(err))
+				continue
+			}
+			// only add peers that are not ourselves
+			if n.replicaID == replicaID {
+				continue
+			}
 			peers = append(peers, nodedata.dbGossipAddr)
 		}
-		err := n.startMultiRaft(context.TODO(), peers)
-		if err != nil {
-			n.logger.Error("Error starting multi raft", zap.Error(err))
-			panic(fmt.Sprintf("unable to start multi-raft server:", err))
+		if len(peers) != 0 {
+			n.logger.Info("Starting multi raft", zap.Strings("peers", peers))
+			err := n.startMultiRaft(context.TODO(), peers)
+			if err != nil {
+				n.logger.Error("Error starting multi raft", zap.Error(err))
+				panic(fmt.Sprintf("unable to start multi-raft server:", err))
+			}
+			n.nh.GetNodeHostRegistry()
 		}
-		n.nh.GetNodeHostRegistry()
 	case serf.EventMemberReap, serf.EventMemberLeave:
 		me := e.(serf.MemberEvent)
 		n.logger.Info("Server Serf Handler: Member Leave/Reap", zap.String("serf-event", fmt.Sprintf("%+v", me)))
@@ -308,6 +312,15 @@ func (n *server) startMultiRaft(ctx context.Context, peers []string) error {
 			return
 		}
 		n.nh = nh
+
+		if n.config.Bootstrap {
+			for shardID := 1; shardID < numShards+1; shardID++ {
+				if err := n.NewShard(config.Bootstrap, uint64(shardID)); err != nil {
+					err = fmt.Errorf("creating shard %d: %w", shardID, err)
+					return
+				}
+			}
+		}
 	})
 
 	return err
