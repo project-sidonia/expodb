@@ -4,10 +4,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/project-sidonia/expodb/pkg/config"
-	"github.com/project-sidonia/expodb/pkg/version"
 	"github.com/hashicorp/memberlist"
 	"github.com/hashicorp/serf/serf"
+	"github.com/project-sidonia/expodb/pkg/config"
+	"github.com/project-sidonia/expodb/pkg/version"
 	"go.uber.org/zap"
 )
 
@@ -66,6 +66,8 @@ func createSerfConfig(config *config.Config, logger *zap.Logger, ch chan serf.Ev
 	serfConfig.Tags["raft_port"] = strconv.Itoa(config.RaftBindPort)
 	serfConfig.Tags["serf_addr"] = config.SerfAdvertiseAddr
 	serfConfig.Tags["serf_port"] = strconv.Itoa(config.SerfAdvertisePort)
+	serfConfig.Tags["dbgossip_addr"] = config.DBGossipAddress
+	serfConfig.Tags["dbgossip_port"] = strconv.Itoa(config.DBGossipPort)
 	// serfConfig.Tags["grpc_addr"] = // Address that clients will use to RPC to servers
 	// serfConfig.Tags["grpc_port"] = // Port servers use to RPC to one and another
 	if config.Bootstrap {
