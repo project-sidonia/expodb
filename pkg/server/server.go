@@ -47,6 +47,8 @@ type server struct {
 	raftAgentsMu sync.Mutex
 	raftAgents   map[uint64]bool
 
+	raftOnce sync.Once
+
 	consistent *consistent.Consistent
 
 	replicaID uint64
@@ -177,40 +179,13 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 		return nil, fmt.Errorf("making raft data dir: %w", err)
 	}
 
-	datadir := filepath.Join(config.RaftDataDir, "multigroup-data", config.ID())
-
 	// change the log verbosity
 	//logger.GetLogger("raft").SetLevel(logger.ERROR)
 	//logger.GetLogger("rsm").SetLevel(logger.WARNING)
 	//logger.GetLogger("transport").SetLevel(logger.WARNING)
 	//logger.GetLogger("grpc").SetLevel(logger.WARNING)
-	nhc := dgConfig.NodeHostConfig{
-		WALDir:              datadir,
-		NodeHostDir:         datadir,
-		RTTMillisecond:      200,
-		RaftAddress:         fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort),
-		RaftEventListener:   ser,
-		AddressByNodeHostID: true,
-		// TODO (ajr) Set up the following
-		Gossip: dgConfig.GossipConfig{},
-		Expert: dgConfig.ExpertConfig{},
-	}
-	// create a NodeHost instance. it is a facade interface allowing access to
-	// all functionalities provided by dragonboat.
-	nh, err := dragonboat.NewNodeHost(nhc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create nodehost, %w", err)
-	}
-	ser.nh = nh
-	if config.Bootstrap {
-		for shardID := 1; shardID < numShards+1; shardID++ {
-			if err := ser.NewShard(config.Bootstrap, uint64(shardID)); err != nil {
-				return nil, fmt.Errorf("creating shard %d: %w", shardID, err)
-			}
-		}
-	}
 
-	// register ourselfs as a handler for serf events. See (n *server) HandleEvent(e serf.Event)
+	// register ourselves as a handler for serf events. See (n *server) HandleEvent(e serf.Event)
 	serfAgent.RegisterEventHandler(ser)
 
 	return ser, nil
@@ -261,14 +236,34 @@ func (n *server) HandleEvent(e serf.Event) {
 		me := e.(serf.MemberEvent)
 		n.logger.Info("Server Serf Handler: Member Join", zap.String("serf-event", fmt.Sprintf("%+v", me.Members)))
 
+		peers := []string{}
 		for _, m := range me.Members {
 			n.consistent.Add(myMember(m.Name))
-			_, err := n.metadata.Add(m)
+			nodedata, err := n.metadata.Add(m)
 			if err != nil {
 				n.logger.Error("Error processing metadata",
 					zap.String("serf.Member", fmt.Sprintf("%+v", m)), zap.Error(err),
 				)
 			}
+			replicaID, err := parseNodeID(nodedata.ID())
+			if err != nil {
+				n.logger.Error("Error parsing node ID", zap.String("node-id", nodedata.ID()), zap.Error(err))
+				continue
+			}
+			// only add peers that are not ourselves
+			if n.replicaID == replicaID {
+				continue
+			}
+			peers = append(peers, nodedata.dbGossipAddr)
+		}
+		if len(peers) != 0 {
+			n.logger.Info("Starting multi raft", zap.Strings("peers", peers))
+			err := n.startMultiRaft(context.TODO(), peers)
+			if err != nil {
+				n.logger.Error("Error starting multi raft", zap.Error(err))
+				panic(fmt.Sprintf("unable to start multi-raft server:", err))
+			}
+			n.nh.GetNodeHostRegistry()
 		}
 	case serf.EventMemberReap, serf.EventMemberLeave:
 		me := e.(serf.MemberEvent)
@@ -282,6 +277,53 @@ func (n *server) HandleEvent(e serf.Event) {
 	default:
 		n.logger.Info("Server Serf Handler: Unhandled type", zap.String("serf-event", fmt.Sprintf("%+v", e)))
 	}
+}
+
+// startMultiRaft start starts the server
+func (n *server) startMultiRaft(ctx context.Context, peers []string) error {
+	var err error
+	n.raftOnce.Do(func() {
+		config := n.config
+		datadir := filepath.Join(config.RaftDataDir, "multigroup-data", config.ID())
+		dbGossipAddr := &net.TCPAddr{
+			IP:   net.ParseIP(config.DBGossipAddress),
+			Port: config.DBGossipPort,
+		}
+		nhc := dgConfig.NodeHostConfig{
+			WALDir:              datadir,
+			NodeHostDir:         datadir,
+			RTTMillisecond:      200,
+			RaftAddress:         fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort),
+			RaftEventListener:   n,
+			AddressByNodeHostID: true,
+			// TODO (ajr) Set up the following
+			Gossip: dgConfig.GossipConfig{
+				BindAddress:      dbGossipAddr.String(),
+				AdvertiseAddress: dbGossipAddr.String(),
+				Seed:             peers,
+			},
+			Expert: dgConfig.ExpertConfig{},
+		}
+		// create a NodeHost instance. it is a facade interface allowing access to
+		// all functionalities provided by dragonboat.``
+		nh, err := dragonboat.NewNodeHost(nhc)
+		if err != nil {
+			err = fmt.Errorf("failed to create nodehost, %w", err)
+			return
+		}
+		n.nh = nh
+
+		if n.config.Bootstrap {
+			for shardID := 1; shardID < numShards+1; shardID++ {
+				if err := n.NewShard(config.Bootstrap, uint64(shardID)); err != nil {
+					err = fmt.Errorf("creating shard %d: %w", shardID, err)
+					return
+				}
+			}
+		}
+	})
+
+	return err
 }
 
 func (n *server) scheduleShards(ctx context.Context) error {
@@ -304,6 +346,7 @@ func (n *server) scheduleShards(ctx context.Context) error {
 				n.logger.Warn("Checking leadership", zap.Int("shard", shardID), zap.Error(err))
 				//return fmt.Errorf("checking leader: %w", err)
 			}
+
 			for _, member := range members {
 				// Handle removing ourselves from shards we're not a part of
 				if v, ok := n.raftAgents[uint64(shardID)]; n.config.ID() == member.String() && (!ok || !v) {
@@ -340,6 +383,7 @@ func (n *server) scheduleShards(ctx context.Context) error {
 						zap.Error(err),
 					)
 				}
+
 				n.logger.Info("Peer joined Raft", zap.String("peer.id", nodedata.ID()),
 					zap.String("peer.remoteaddr", nodedata.RaftAddr()))
 			}

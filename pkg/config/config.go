@@ -21,6 +21,7 @@ type args struct {
 	SerfAdvertisePort    int
 	SerfJoinAddrs        []string
 	HTTPPort             int
+	DBGossipPort         int
 	SerfDataDir          string
 	RaftDataDir          string
 	Bootstrap            bool
@@ -36,6 +37,9 @@ type Config struct {
 	SerfDataDir       string
 	SerfJoinAddrs     []string
 	IsSerfSeed        bool
+
+	DBGossipAddress string
+	DBGossipPort    int
 
 	HTTPBindAddress string
 	HTTPBindPort    int
@@ -147,6 +151,15 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
+	// DBGossip port
+	if args.DBGossipPort < 1 || args.DBGossipPort > 65536 {
+		configErr := &ConfigError{
+			ConfigurationPoint: "dbgossip-port",
+			Err:                fmt.Errorf("port numbers must be 1 < port < 65536, got:%v", args.DBGossipPort),
+		}
+		errors = multierror.Append(errors, configErr)
+	}
+
 	// HTTP port
 	if args.HTTPPort < 1 || args.HTTPPort > 65536 {
 		configErr := &ConfigError{
@@ -193,6 +206,8 @@ func LoadConfig() (*Config, error) {
 		RaftDataDir:       raftDataDir,
 		JoinAddress:       args.JoinAddress, //TODO - validate this looks address-like
 		IsSerfSeed:        args.IsSeed,
+		DBGossipPort:      args.DBGossipPort,
+		DBGossipAddress:   bindAddr.String(),
 		SerfDataDir:       serfDataDir,
 		SerfBindAddress:   bindAddr.String(),
 		SerfBindPort:      args.SerfPort,
@@ -240,6 +255,9 @@ func getArgs() *args {
 
 	flag.IntVarP(&parsedArgs.HTTPPort, "http-port", "H",
 		8000, "Port on which to bind HTTP")
+
+	flag.IntVarP(&parsedArgs.DBGossipPort, "db-gossip-port", "D",
+		9000, "Port on which to bind dragonboat gossip")
 
 	flag.StringVar(&parsedArgs.JoinAddress, "join",
 		"", "Address of another node to join")

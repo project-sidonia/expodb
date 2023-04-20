@@ -58,6 +58,8 @@ type nodedata struct {
 	id       string
 	raftAddr string
 	httpAddr string
+
+	dbGossipAddr string
 }
 
 // nodeDataFromSerf returns a nodedata from a serf member.
@@ -87,10 +89,21 @@ func nodeDataFromSerf(m serf.Member) (*nodedata, error) {
 	}
 	httpAddress := fmt.Sprintf("%s:%s", peerAddr, peerPort)
 
+	peerAddr, ok = m.Tags["dbgossip_addr"]
+	if !ok {
+		return nil, fmt.Errorf("metadata: missing `gossip_addr` tag?")
+	}
+	peerPort, ok = m.Tags["dbgossip_port"]
+	if !ok {
+		return nil, fmt.Errorf("metadata: missing `gossip_port` tag?")
+	}
+	dbGossipAddr := fmt.Sprintf("%s:%s", peerAddr, peerPort)
+
 	return &nodedata{
-		id:       id,
-		raftAddr: raftAddress,
-		httpAddr: httpAddress,
+		id:           id,
+		raftAddr:     raftAddress,
+		httpAddr:     httpAddress,
+		dbGossipAddr: dbGossipAddr,
 	}, nil
 }
 
