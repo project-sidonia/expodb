@@ -54,14 +54,6 @@ type server struct {
 	replicaID uint64
 }
 
-// AddVoter adds a voting peer to the raft consenses group.
-// Can only be called on the leader.
-func (a *server) AddVoter(ctx context.Context, shardID, replicaID uint64, peerAddress string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	return a.nh.SyncRequestAddReplica(ctx, shardID, replicaID, peerAddress, 0)
-}
-
 // Apply is used to apply a command to the FSM in a highly consistent
 // manner.  This call blocks until the log is conserted commited or
 // until 5 seconds is reached.
@@ -247,7 +239,7 @@ func (n *server) getStateMachineDir() string {
 func (n *server) existingShards() ([]uint64, error) {
 	datadir := filepath.Join(n.config.RaftDataDir, "statemachine-data", n.config.ID())
 	items, err := os.ReadDir(datadir)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading dir: %w", err)
 	}
 	shardIDs := []uint64{}
@@ -338,69 +330,84 @@ func (n *server) HandleEvent(e serf.Event) {
 
 func (n *server) scheduleShards(ctx context.Context) error {
 	timer := time.NewTimer(5 * time.Second)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		desiredState := map[uint64][]consistent.Member{}
-		for shardID := 1; shardID < numShards+1; shardID++ {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			desiredState := map[uint64][]consistent.Member{}
+			currentState := map[uint64]map[uint64]string{}
 			if len(n.consistent.GetMembers()) < 3 {
 				n.logger.Warn("Not enough members to schedule shards", zap.Int("num_members", len(n.consistent.GetMembers())))
-				return nil
+				timer.Reset(30 * time.Second)
+				continue
 			}
-			members, err := n.consistent.GetClosestNForPartition(int(shardID)-1, 3)
-			if err != nil {
-				return fmt.Errorf("getting closest members: %w", err)
-			}
-			desiredState[uint64(shardID)] = members
+			for shardID := 1; shardID < numShards+1; shardID++ {
+				members, err := n.consistent.GetClosestNForPartition(int(shardID)-1, 3)
+				if err != nil {
+					return fmt.Errorf("getting closest members: %w", err)
+				}
+				desiredState[uint64(shardID)] = members
 
-			isLeader, err := n.isLeader(uint64(shardID))
-			if err != nil {
-				n.logger.Warn("Checking leadership", zap.Int("shard", shardID), zap.Error(err))
-				//return fmt.Errorf("checking leader: %w", err)
-			}
-			for _, member := range members {
-				if v, ok := n.raftAgents[uint64(shardID)]; n.config.ID() == member.String() && (!ok || !v) {
-					// We are the closest member to this shard, so we should schedule it.
-					if err := n.NewShard(false, true, uint64(shardID)); err != nil {
-						return fmt.Errorf("creating shard %d: %w", shardID, err)
+				isLeader, err := n.isLeader(uint64(shardID))
+				if err != nil {
+					n.logger.Warn("Checking leadership", zap.Int("shard", shardID), zap.Error(err))
+					//return fmt.Errorf("checking leader: %w", err)
+				}
+				for _, member := range members {
+					if v, ok := n.raftAgents[uint64(shardID)]; n.config.ID() == member.String() && (!ok || !v) {
+						// We are the closest member to this shard, so we should schedule it.
+						if err := n.NewShard(false, true, uint64(shardID)); err != nil {
+							return fmt.Errorf("creating shard %d: %w", shardID, err)
+						}
 					}
-				}
-				if !isLeader {
-					continue
-				}
+					if !isLeader {
+						continue
+					}
+					// This does all the leader work.
+					ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+					defer cancel()
 
-				// TODO check bool for error
-				nodedata, ok := n.metadata.FindByID(member.String())
-				if !ok {
-					n.logger.Error("Finding nodedata id", zap.String("member", member.String()))
-					continue
+					membership, err := n.nh.SyncGetShardMembership(ctx, uint64(shardID))
+					if err != nil {
+						return fmt.Errorf("getting shard membership: %w", err)
+					}
+					// shardID -> map of replicaID -> RaftAddress
+					currentState[uint64(shardID)] = membership.Nodes
+
+					nodedata, ok := n.metadata.FindByID(member.String())
+					if !ok {
+						n.logger.Error("Finding nodedata id", zap.String("member", member.String()))
+						continue
+					}
+					// join new peer as a raft voter
+					replicaID, err := parseNodeID(nodedata.ID())
+					if err != nil {
+						n.logger.Error("Error parsing nodedata id",
+							zap.String("peer.id", nodedata.ID()),
+							zap.String("peer.remoteaddr", nodedata.RaftAddr()),
+							zap.Error(err),
+						)
+						continue
+					}
+					if _, ok := currentState[uint64(shardID)][replicaID]; ok {
+						continue
+					}
+					err = n.nh.SyncRequestAddReplica(ctx, uint64(shardID), replicaID, nodedata.RaftAddr(), 0)
+					if err != nil {
+						n.logger.Error("Error joining peer to Raft",
+							zap.String("peer.id", nodedata.ID()),
+							zap.String("peer.remoteaddr", nodedata.RaftAddr()),
+							zap.Error(err),
+						)
+					}
+					n.logger.Info("Peer joined Raft", zap.String("peer.id", nodedata.ID()),
+						zap.String("peer.remoteaddr", nodedata.RaftAddr()))
 				}
-				// join new peer as a raft voter
-				replicaID, err := parseNodeID(nodedata.ID())
-				if err != nil {
-					n.logger.Error("Error parsing nodedata id",
-						zap.String("peer.id", nodedata.ID()),
-						zap.String("peer.remoteaddr", nodedata.RaftAddr()),
-						zap.Error(err),
-					)
-					continue
-				}
-				err = n.AddVoter(context.Background(), uint64(shardID), replicaID, nodedata.RaftAddr())
-				if err != nil {
-					n.logger.Error("Error joining peer to Raft",
-						zap.String("peer.id", nodedata.ID()),
-						zap.String("peer.remoteaddr", nodedata.RaftAddr()),
-						zap.Error(err),
-					)
-				}
-				n.logger.Info("Peer joined Raft", zap.String("peer.id", nodedata.ID()),
-					zap.String("peer.remoteaddr", nodedata.RaftAddr()))
 			}
+			timer.Reset(30 * time.Second)
 		}
-		timer.Reset(30 * time.Second)
 	}
-	return nil
 }
 
 // Serve runs the server's agents and blocks until one of the following:
