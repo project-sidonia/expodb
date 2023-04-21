@@ -29,6 +29,9 @@ const (
 	updatingDBFilename string = "current.updating"
 )
 
+// ensure that DiskKV implements IOnDiskStateMachine
+var _ sm.IOnDiskStateMachine = (*DiskKV)(nil)
+
 // Note: it assumes the underlying db only supports Get, Put
 // and TakeSnapshot operations. this is not a demonstration
 // on how to build a  distributed key-value database.

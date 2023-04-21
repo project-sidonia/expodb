@@ -73,6 +73,7 @@ func (a *server) Apply(ctx context.Context, shardID uint64, val machines.RaftEnt
 	return err
 }
 
+// Read is used to read a value from the FSM in a highly consistent
 func (a *server) Read(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -145,6 +146,7 @@ func parseNodeID(nodeName string) (uint64, error) {
 	return replicaID, nil
 }
 
+// New creates a new server.
 func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	if err := os.MkdirAll(config.SerfDataDir, 0700); err != nil {
 		return nil, fmt.Errorf("making serf data dir: %w", err)
@@ -261,6 +263,7 @@ func (n *server) existingShards() ([]uint64, error) {
 	return shardIDs, errors.ErrorOrNil()
 }
 
+// NewShard creates a new shard with the given ID.
 func (n *server) NewShard(bootstrap bool, join bool, shardID uint64) error {
 	n.raftAgentsMu.Lock()
 	defer n.raftAgentsMu.Unlock()
@@ -287,6 +290,7 @@ func (n *server) NewShard(bootstrap bool, join bool, shardID uint64) error {
 	return nil
 }
 
+// LeaderUpdated is called by Dragonboat's raft transport when the leader for a shard changes.
 func (n *server) LeaderUpdated(info raftio.LeaderInfo) {
 	// TODO (ajr) When we have actual multiraft!
 	if v, ok := n.raftAgents[info.ShardID]; ok && v {
