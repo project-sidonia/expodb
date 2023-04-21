@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/buraksezer/consistent"
+	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/serf/serf"
 	"github.com/lni/dragonboat/v4"
 	dgConfig "github.com/lni/dragonboat/v4/config"
@@ -44,6 +45,7 @@ type server struct {
 	}
 	nh *dragonboat.NodeHost
 
+	// Current shards started on this node.
 	raftAgentsMu sync.Mutex
 	raftAgents   map[uint64]bool
 
@@ -72,6 +74,9 @@ func (a *server) Apply(ctx context.Context, shardID uint64, val machines.RaftEnt
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	// Equivalent to:
+	//nu, _ := a.nh.GetNodeUser(shardID)
+	//rq, _ := nu.Propose(cs, data, 5 * time.Second)
 	_, err = a.nh.SyncPropose(ctx, cs, data)
 	return err
 }
@@ -79,6 +84,10 @@ func (a *server) Apply(ctx context.Context, shardID uint64, val machines.RaftEnt
 func (a *server) Read(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	// Equivalent to:
+	//nu, _ := a.nh.GetNodeUser(shardID)
+	//rq, _ := nu.ReadIndex(5 * time.Second)
+	//a.nh.ReadLocalNode(rq, query)
 	res, err := a.nh.SyncRead(ctx, shardID, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read: %w", err)
@@ -185,15 +194,11 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	//logger.GetLogger("transport").SetLevel(logger.WARNING)
 	//logger.GetLogger("grpc").SetLevel(logger.WARNING)
 	nhc := dgConfig.NodeHostConfig{
-		WALDir:              datadir,
-		NodeHostDir:         datadir,
-		RTTMillisecond:      200,
-		RaftAddress:         fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort),
-		RaftEventListener:   ser,
-		AddressByNodeHostID: true,
-		// TODO (ajr) Set up the following
-		Gossip: dgConfig.GossipConfig{},
-		Expert: dgConfig.ExpertConfig{},
+		WALDir:            datadir,
+		NodeHostDir:       datadir,
+		RTTMillisecond:    200,
+		RaftAddress:       fmt.Sprintf("%s:%d", config.RaftBindAddress, config.RaftBindPort),
+		RaftEventListener: ser,
 	}
 	// create a NodeHost instance. it is a facade interface allowing access to
 	// all functionalities provided by dragonboat.
@@ -202,9 +207,18 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 		return nil, fmt.Errorf("failed to create nodehost, %w", err)
 	}
 	ser.nh = nh
-	if config.Bootstrap {
+	existingShards, err := ser.existingShards()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get existing shards: %w", err)
+	}
+	for _, shardID := range existingShards {
+		if err := ser.NewShard(false, false, uint64(shardID)); err != nil {
+			return nil, fmt.Errorf("creating shard %d: %w", shardID, err)
+		}
+	}
+	if len(existingShards) == 0 && config.Bootstrap {
 		for shardID := 1; shardID < numShards+1; shardID++ {
-			if err := ser.NewShard(config.Bootstrap, uint64(shardID)); err != nil {
+			if err := ser.NewShard(config.Bootstrap, false, uint64(shardID)); err != nil {
 				return nil, fmt.Errorf("creating shard %d: %w", shardID, err)
 			}
 		}
@@ -216,13 +230,51 @@ func New(config *config.Config, logger *zap.Logger) (*server, error) {
 	return ser, nil
 }
 
-func (n *server) NewShard(bootstrap bool, shardID uint64) error {
+func (n *server) getStateMachineDir() string {
+	return filepath.Join(n.config.RaftDataDir, "statemachine-data", n.config.ID())
+}
+
+//	func (n *server) shardDirExists(shardID uint64) (bool, error) {
+//		datadir := filepath.Join(n.config.RaftDataDir, "statemachine-data", n.config.ID())
+//		dir := multiraft.GetNodeDBDirName(datadir, shardID, n.replicaID)
+//		if _, err := os.Stat(dir); err != nil && !os.IsNotExist(err) {
+//			return false, fmt.Errorf("stat: %w", err)
+//		} else if err == nil {
+//			return true, nil
+//		}
+//		return false, nil
+//	}
+func (n *server) existingShards() ([]uint64, error) {
+	datadir := filepath.Join(n.config.RaftDataDir, "statemachine-data", n.config.ID())
+	items, err := os.ReadDir(datadir)
+	if err != nil {
+		return nil, fmt.Errorf("reading dir: %w", err)
+	}
+	shardIDs := []uint64{}
+	var errors *multierror.Error
+	for _, item := range items {
+		if item.IsDir() {
+			ss := strings.Split(item.Name(), "_")
+			if len(ss) != 2 {
+				continue
+			}
+
+			shardID, err := strconv.ParseUint(ss[0], 10, 64)
+			if err != nil {
+				errors = multierror.Append(errors, fmt.Errorf("parsing shard id %s: %w", ss[0], err))
+			}
+			shardIDs = append(shardIDs, shardID)
+		}
+	}
+	return shardIDs, errors.ErrorOrNil()
+}
+
+func (n *server) NewShard(bootstrap bool, join bool, shardID uint64) error {
 	n.raftAgentsMu.Lock()
 	defer n.raftAgentsMu.Unlock()
 
-	datadir := filepath.Join(n.config.RaftDataDir, "statemachine-data", n.config.ID())
 	members := map[uint64]string{}
-	if bootstrap {
+	if bootstrap && !join {
 		members[n.replicaID] = n.nh.RaftAddress()
 	}
 
@@ -236,7 +288,7 @@ func (n *server) NewShard(bootstrap bool, shardID uint64) error {
 		ShardID:            shardID,
 	}
 
-	if err := n.nh.StartOnDiskReplica(members, len(members) == 0, multiraft.NewDiskKV(datadir), rc); err != nil {
+	if err := n.nh.StartOnDiskReplica(members, join, multiraft.NewDiskKV(n.getStateMachineDir()), rc); err != nil {
 		return fmt.Errorf("starting replica: %w", err)
 	}
 	n.raftAgents[shardID] = true
@@ -290,6 +342,7 @@ func (n *server) scheduleShards(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
+		desiredState := map[uint64][]consistent.Member{}
 		for shardID := 1; shardID < numShards+1; shardID++ {
 			if len(n.consistent.GetMembers()) < 3 {
 				n.logger.Warn("Not enough members to schedule shards", zap.Int("num_members", len(n.consistent.GetMembers())))
@@ -299,16 +352,17 @@ func (n *server) scheduleShards(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("getting closest members: %w", err)
 			}
+			desiredState[uint64(shardID)] = members
+
 			isLeader, err := n.isLeader(uint64(shardID))
 			if err != nil {
 				n.logger.Warn("Checking leadership", zap.Int("shard", shardID), zap.Error(err))
 				//return fmt.Errorf("checking leader: %w", err)
 			}
 			for _, member := range members {
-				// Handle removing ourselves from shards we're not a part of
 				if v, ok := n.raftAgents[uint64(shardID)]; n.config.ID() == member.String() && (!ok || !v) {
 					// We are the closest member to this shard, so we should schedule it.
-					if err := n.NewShard(false, uint64(shardID)); err != nil {
+					if err := n.NewShard(false, true, uint64(shardID)); err != nil {
 						return fmt.Errorf("creating shard %d: %w", shardID, err)
 					}
 				}

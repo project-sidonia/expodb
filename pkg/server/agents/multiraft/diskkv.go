@@ -179,7 +179,7 @@ func isNewRun(dir string) bool {
 	return false
 }
 
-func getNodeDBDirName(datadir string, clusterID uint64, nodeID uint64) string {
+func GetNodeDBDirName(datadir string, clusterID uint64, nodeID uint64) string {
 	part := fmt.Sprintf("%d_%d", clusterID, nodeID)
 	return filepath.Join(datadir, part)
 }
@@ -313,7 +313,7 @@ type DiskKV struct {
 func NewDiskKV(datadir string) func(uint64, uint64) sm.IOnDiskStateMachine {
 	return func(clusterID uint64, nodeID uint64) sm.IOnDiskStateMachine {
 		d := &DiskKV{
-			datadir:   datadir,
+			datadir:   GetNodeDBDirName(datadir, clusterID, nodeID),
 			clusterID: clusterID,
 			nodeID:    nodeID,
 		}
@@ -340,7 +340,7 @@ func (d *DiskKV) queryAppliedIndex(db *pebbledb) (uint64, error) {
 // Open opens the state machine and return the index of the last Raft Log entry
 // already updated into the state machine.
 func (d *DiskKV) Open(stopc <-chan struct{}) (uint64, error) {
-	dir := getNodeDBDirName(d.datadir, d.clusterID, d.nodeID)
+	dir := d.datadir
 	if err := createNodeDataDir(dir); err != nil {
 		panic(err)
 	}
@@ -534,7 +534,7 @@ func (d *DiskKV) RecoverFromSnapshot(r io.Reader,
 	if d.closed {
 		panic("recover from snapshot called after Close()")
 	}
-	dir := getNodeDBDirName(d.datadir, d.clusterID, d.nodeID)
+	dir := d.datadir
 	dbdir := getNewRandomDBDirName(dir)
 	oldDirName, err := getCurrentDBDirName(dir)
 	if err != nil {
